@@ -7,6 +7,7 @@ bin/
 obj/
 out/
 
+
 # ========================
 # CMake
 # ========================
@@ -15,6 +16,7 @@ CMakeCache.txt
 cmake_install.cmake
 Makefile
 compile_commands.json
+
 
 # ========================
 # Compiled objects
@@ -39,6 +41,10 @@ compile_commands.json
 *.app
 
 # ========================
+# Data files
+# ========================
+MNIST_Data/
+# ========================
 # Debug / profiling
 # ========================
 *.dSYM/
@@ -56,6 +62,7 @@ compile_commands.json
 # VS Code
 # ========================
 .vscode/
+.idea/
 
 # ========================
 # OS junk
