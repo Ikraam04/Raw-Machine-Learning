@@ -2,188 +2,286 @@
 #include "dense.h"
 #include "activation.h"
 #include "eigen_backend.h"
+#include "mnist_loader.h"
 #include <iostream>
 #include <iomanip>
-#include <cmath>
+#include <random>
+#include <algorithm>
+#include <chrono>
 
 using namespace nn;
+using BackendPtr = std::shared_ptr<Backend>;
 
 /**
- * XOR Problem:
- * 
- * Input  | Output
- * -------|-------
- * 0, 0   | 0
- * 0, 1   | 1
- * 1, 0   | 1
- * 1, 1   | 0
- * 
- * This is NOT linearly separable - requires non-linear activation!
- * A single Dense layer cannot solve this.
+ * Compute Mean Squared Error loss and gradient for a batch
  */
-
-void test_xor() {
-    std::cout << "========================================\n";
-    std::cout << "  Training Neural Network on XOR       \n";
-    std::cout << "========================================\n\n";
+float compute_mse_loss_batch(const Tensor& output, 
+                             const std::vector<float>& targets,
+                             Tensor& grad_output,
+                             size_t batch_size) {
+    float total_loss = 0.0f;
     
-    auto backend = std::make_shared<EigenBackend>();
-    
-    // Create network: 2 -> 4 -> 1 with sigmoid activations
-    // Input: 2 features (x1, x2)
-    // Hidden: 4 neurons with sigmoid
-    // Output: 1 neuron with sigmoid
-    Sequential network;
-    network.add(std::make_shared<Dense>(2, 4, backend));
-    network.add(std::make_shared<Sigmoid>(backend));
-    network.add(std::make_shared<Dense>(4, 1, backend));
-    network.add(std::make_shared<Sigmoid>(backend));
-    
-    std::cout << "Network architecture:\n";
-    std::cout << "  Input(2) -> Dense(4) -> Sigmoid -> Dense(1) -> Sigmoid -> Output(1)\n\n";
-    
-    // XOR training data
-    std::vector<std::vector<float>> X = {
-        {0.0f, 0.0f},
-        {0.0f, 1.0f},
-        {1.0f, 0.0f},
-        {1.0f, 1.0f}
-    };
-    
-    std::vector<float> Y = {0.0f, 1.0f, 1.0f, 0.0f};
-    
-    float learning_rate = 0.5f;
-    int epochs = 500;
-    
-    std::cout << "Training for " << epochs << " epochs with learning_rate=" << learning_rate << "\n\n";
-    
-    // Training loop
-    for (int epoch = 0; epoch < epochs; ++epoch) {
-        float total_loss = 0.0f;
-        
-        // Train on each sample
-        for (size_t i = 0; i < X.size(); ++i) {
-            // Prepare input
-            Tensor input({1, 2}, backend);
-            input.set_data(X[i]);
-            
-            // Forward pass
-            Tensor output = network.forward(input);
-            
-            // Compute loss (Mean Squared Error)
-            float prediction = output.data()[0];
-            float target = Y[i];
-            float error = prediction - target;
+    for (size_t b = 0; b < batch_size; ++b) {
+        for (size_t j = 0; j < 10; ++j) {
+            size_t idx = b * 10 + j;
+            float error = output.data()[idx] - targets[idx];
             total_loss += error * error;
-            
-            // Compute gradient (derivative of MSE: 2 * error)
-            Tensor grad_output({1, 1}, backend);
-            grad_output.set_data({2.0f * error});
-            
-            // Backward pass
-            network.backward(grad_output);
-            
-            // Update parameters
-            network.update_parameters(learning_rate);
-        }
-        
-        // Print progress every 1000 epochs
-        if (epoch % 1000 == 0) {
-            float avg_loss = total_loss / X.size();
-            std::cout << "Epoch " << std::setw(5) << epoch 
-                      << " | Loss: " << std::fixed << std::setprecision(6) << avg_loss << "\n";
+            // Gradient scaled by batch size for proper averaging
+            grad_output.data()[idx] = 2.0f * error / batch_size;
         }
     }
     
-    std::cout << "\n========================================\n";
-    std::cout << "  Training Complete! Testing...        \n";
-    std::cout << "========================================\n\n";
-    
-    // Test the trained network
-    std::cout << "XOR Truth Table:\n";
-    std::cout << "Input (x1, x2) | Target | Prediction | Correct?\n";
-    std::cout << "---------------|--------|------------|----------\n";
-    
-    int correct = 0;
-    for (size_t i = 0; i < X.size(); ++i) {
-        Tensor input({1, 2}, backend);
-        input.set_data(X[i]);
-        
-        Tensor output = network.forward(input);
-        float prediction = output.data()[0];
-        float target = Y[i];
-        
-        // Round to nearest integer for classification
-        int predicted_class = prediction > 0.5f ? 1 : 0;
-        int target_class = static_cast<int>(target);
-        bool is_correct = predicted_class == target_class;
-        
-        if (is_correct) correct++;
-        
-        std::cout << "(" << X[i][0] << ", " << X[i][1] << ")       | "
-                  << target << "      | "
-                  << std::fixed << std::setprecision(4) << prediction << "     | "
-                  << (is_correct ? "✓" : "✗") << "\n";
-    }
-    
-    std::cout << "\nAccuracy: " << correct << "/" << X.size() 
-              << " (" << (100.0f * correct / X.size()) << "%)\n";
-    
-    if (correct == 4) {
-        std::cout << "\n🎉 SUCCESS! Network learned XOR perfectly!\n";
-    } else {
-        std::cout << "\n⚠ Network didn't fully converge. Try more epochs or adjust learning rate.\n";
-    }
+    return total_loss / (batch_size * 10);  // Average loss per sample
 }
 
-void test_activation_layers() {
-    std::cout << "\n========================================\n";
-    std::cout << "  Testing Activation Layers            \n";
-    std::cout << "========================================\n\n";
+/**
+ * Evaluate accuracy on a dataset (using batching for speed)
+ */
+float evaluate_accuracy(Sequential& network, 
+                       const MNISTDataset& dataset,
+                       BackendPtr backend,
+                       size_t max_samples = 10000,
+                       size_t batch_size = 100) {
+    size_t correct = 0;
+    size_t num_samples = std::min(max_samples, dataset.size());
     
-    auto backend = std::make_shared<EigenBackend>();
+    for (size_t i = 0; i < num_samples; i += batch_size) {
+        size_t current_batch = std::min(batch_size, num_samples - i);
+        
+        // Create batch
+        Tensor batch_input({current_batch, 784}, backend);
+        for (size_t b = 0; b < current_batch; ++b) {
+            for (size_t j = 0; j < 784; ++j) {
+                batch_input.data()[b * 784 + j] = dataset.images[i + b][j];
+            }
+        }
+        
+        // Forward pass
+        Tensor output = network.forward(batch_input);
+        
+        // Check predictions
+        for (size_t b = 0; b < current_batch; ++b) {
+            std::vector<float> output_vec(10);
+            for (size_t j = 0; j < 10; ++j) {
+                output_vec[j] = output.data()[b * 10 + j];
+            }
+            
+            uint8_t predicted = predict_class(output_vec);
+            if (predicted == dataset.labels[i + b]) {
+                correct++;
+            }
+        }
+    }
     
-    // Test ReLU
-    std::cout << "=== ReLU ===\n";
-    ReLU relu(backend);
-    
-    Tensor relu_input({1, 4}, backend);
-    relu_input.set_data({-2.0f, -1.0f, 1.0f, 2.0f});
-    
-    relu_input.print("Input");
-    Tensor relu_output = relu.forward(relu_input);
-    relu_output.print("ReLU output");
-    
-    Tensor relu_grad_out({1, 4}, backend);
-    relu_grad_out.fill(1.0f);
-    Tensor relu_grad_in = relu.backward(relu_grad_out);
-    relu_grad_in.print("ReLU gradient");
-    
-    // Test Sigmoid
-    std::cout << "=== Sigmoid ===\n";
-    Sigmoid sigmoid(backend);
-    
-    Tensor sig_input({1, 3}, backend);
-    sig_input.set_data({-1.0f, 0.0f, 1.0f});
-    
-    sig_input.print("Input");
-    Tensor sig_output = sigmoid.forward(sig_input);
-    sig_output.print("Sigmoid output");
-    
-    std::cout << "✓ Activation layers work!\n";
+    return 100.0f * correct / num_samples;
 }
 
 int main() {
+    std::cout << "========================================\n";
+    std::cout << "  MNIST Digit Classification           \n";
+    std::cout << "  (With Mini-Batch Training)           \n";
+    std::cout << "========================================\n\n";
+    
     try {
-        //test_activation_layers();
-        test_xor();
+        // ============================================================
+        // Load MNIST Dataset
+        // ============================================================
         
-        std::cout << "\n========================================\n";
-        std::cout << "  ✓ All tests passed!                  \n";
+        std::cout << "Loading training data...\n";
+        auto train_data = load_mnist("../MNIST_Data/train-images.idx3-ubyte",
+                                     "../MNIST_Data/train-labels.idx1-ubyte",
+                                     true);  // normalize to [0, 1]
+                      
+        std::cout << "Loading test data...\n";
+        auto test_data = load_mnist("../MNIST_Data/t10k-images.idx3-ubyte",
+                                    "../MNIST_Data/t10k-labels.idx1-ubyte",
+                                    true);  // normalize to [0, 1]
+        
+        // ============================================================
+        // Create Network
+        // ============================================================
+        
+        auto backend = std::make_shared<EigenBackend>();
+        
+        Sequential network;
+        network.add(std::make_shared<Dense>(784, 128, backend));  // Input: 28×28=784
+        network.add(std::make_shared<ReLU>(backend));
+        network.add(std::make_shared<Dense>(128, 64, backend));
+        network.add(std::make_shared<ReLU>(backend));
+        network.add(std::make_shared<Dense>(64, 10, backend));    // Output: 10 classes
+        network.add(std::make_shared<Sigmoid>(backend));
+        
+        std::cout << "Network Architecture:\n";
+        std::cout << "  Input(784) -> Dense(128) -> ReLU -> Dense(64) -> ReLU -> Dense(10) -> Sigmoid\n";
+        std::cout << "  Total parameters: ~100K\n\n";
+        
+        // ============================================================
+        // Training Configuration
+        // ============================================================
+        
+        const int epochs = 5;
+        const float learning_rate = 0.01f;  // Lowered for better convergence
+        const size_t batch_size = 32;       // Mini-batch size
+        const size_t train_samples = 60000;
+        const size_t num_batches = (train_samples + batch_size - 1) / batch_size;
+        
+        std::cout << "Training Configuration:\n";
+        std::cout << "  Epochs: " << epochs << "\n";
+        std::cout << "  Learning rate: " << learning_rate << "\n";
+        std::cout << "  Batch size: " << batch_size << "\n";
+        std::cout << "  Training samples: " << train_samples << "\n";
+        std::cout << "  Batches per epoch: " << num_batches << "\n\n";
+        
+        // ============================================================
+        // Training Loop
+        // ============================================================
+        
+        std::cout << "Starting training...\n\n";
+        
+        // For shuffling
+        std::vector<size_t> indices(train_samples);
+        for (size_t i = 0; i < train_samples; ++i) indices[i] = i;
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        
+        for (int epoch = 0; epoch < epochs; ++epoch) {
+            auto epoch_start = std::chrono::high_resolution_clock::now();
+            
+            std::cout << "=== Epoch " << (epoch + 1) << "/" << epochs << " ===\n";
+            
+            // Shuffle training data
+            std::shuffle(indices.begin(), indices.end(), gen);
+            
+            float epoch_loss = 0.0f;
+            size_t samples_processed = 0;
+            
+            // Process data in mini-batches
+            for (size_t batch_idx = 0; batch_idx < num_batches; ++batch_idx) {
+                size_t batch_start = batch_idx * batch_size;
+                size_t current_batch_size = std::min(batch_size, train_samples - batch_start);
+                
+                // ============================================================
+                // Prepare Batch
+                // ============================================================
+                
+                Tensor batch_input({current_batch_size, 784}, backend);
+                std::vector<float> batch_targets(current_batch_size * 10);
+                
+                for (size_t b = 0; b < current_batch_size; ++b) {
+                    size_t idx = indices[batch_start + b];
+                    
+                    // Copy image data
+                    for (size_t j = 0; j < 784; ++j) {
+                        batch_input.data()[b * 784 + j] = train_data.images[idx][j];
+                    }
+                    
+                    // Copy target (one-hot)
+                    auto target = label_to_onehot(train_data.labels[idx], 10);
+                    for (size_t j = 0; j < 10; ++j) {
+                        batch_targets[b * 10 + j] = target[j];
+                    }
+                }
+                
+                // ============================================================
+                // Forward Pass
+                // ============================================================
+                
+                Tensor output = network.forward(batch_input);
+                
+                // ============================================================
+                // Compute Loss and Gradient
+                // ============================================================
+                
+                Tensor grad_output({current_batch_size, 10}, backend);
+                float loss = compute_mse_loss_batch(output, batch_targets, grad_output, current_batch_size);
+                epoch_loss += loss * current_batch_size;  // Accumulate total loss
+                
+                // ============================================================
+                // Backward Pass
+                // ============================================================
+                
+                network.backward(grad_output);
+                
+                // ============================================================
+                // Update Parameters (once per batch!)
+                // ============================================================
+                
+                network.update_parameters(learning_rate);
+                
+                samples_processed += current_batch_size;
+                
+                // Progress update every ~10,000 samples
+                if ((batch_idx + 1) % 300 == 0 || batch_idx == num_batches - 1) {
+                    float avg_loss = epoch_loss / samples_processed;
+                    std::cout << "  Batch: " << std::setw(4) << (batch_idx + 1) << "/" << num_batches
+                              << " | Samples: " << std::setw(5) << samples_processed 
+                              << " | Loss: " << std::fixed << std::setprecision(6) << avg_loss;
+                    std::cout << "\n";
+                }
+            }
+            
+            // ============================================================
+            // Epoch Summary
+            // ============================================================
+            
+            auto epoch_end = std::chrono::high_resolution_clock::now();
+            auto duration = std::chrono::duration_cast<std::chrono::seconds>(epoch_end - epoch_start);
+            
+            std::cout << "  Epoch time: " << duration.count() << " seconds\n";
+            
+            // Evaluate accuracy
+            std::cout << "  Evaluating...\n";
+            float train_acc = evaluate_accuracy(network, train_data, backend, 10000, 100);
+            float test_acc = evaluate_accuracy(network, test_data, backend, 10000, 100);
+            
+            std::cout << "  Train Accuracy: " << std::fixed << std::setprecision(2) << train_acc << "%\n";
+            std::cout << "  Test Accuracy: " << std::fixed << std::setprecision(2) << test_acc << "%\n\n";
+        }
+        
+        // ============================================================
+        // Final Evaluation
+        // ============================================================
+        
         std::cout << "========================================\n";
+        std::cout << "  Training Complete!                   \n";
+        std::cout << "========================================\n\n";
+        
+        std::cout << "Final Test Accuracy: ";
+        float final_acc = evaluate_accuracy(network, test_data, backend, 10000, 100);
+        std::cout << std::fixed << std::setprecision(2) << final_acc << "%\n\n";
+        
+        // Show some example predictions
+        std::cout << "Sample Predictions:\n";
+        std::cout << "Image | True | Predicted | Confidence\n";
+        std::cout << "------|------|-----------|------------\n";
+        
+        for (size_t i = 0; i < 20; ++i) {
+            Tensor input({1, 784}, backend);
+            input.set_data(test_data.images[i]);
+            
+            Tensor output = network.forward(input);
+            std::vector<float> output_vec(output.data(), output.data() + 10);
+            uint8_t predicted = predict_class(output_vec);
+            float confidence = output_vec[predicted];
+            
+            std::cout << std::setw(5) << i << " | " 
+                      << std::setw(4) << static_cast<int>(test_data.labels[i]) << " | "
+                      << std::setw(9) << static_cast<int>(predicted) << " | "
+                      << std::fixed << std::setprecision(3) << confidence;
+            
+            if (predicted == test_data.labels[i]) {
+                std::cout << " ✓\n";
+            } else {
+                std::cout << " ✗\n";
+            }
+        }
+        
+        std::cout << "\n🎉 MNIST training successful!\n";
+        
         return 0;
+        
     } catch (const std::exception& e) {
-        std::cerr << "✗ Test failed: " << e.what() << "\n";
+        std::cerr << "Error: " << e.what() << "\n";
         return 1;
     }
 }
