@@ -3,6 +3,7 @@
 #include "activation.h"
 #include "eigen_backend.h"
 #include "mnist_loader.h"
+#include "loss.h"
 #include <iostream>
 #include <iomanip>
 #include <random>
@@ -11,28 +12,6 @@
 
 using namespace nn;
 using BackendPtr = std::shared_ptr<Backend>;
-
-/**
- * Compute Mean Squared Error loss and gradient for a batch
- */
-float compute_mse_loss_batch(const Tensor& output, 
-                             const std::vector<float>& targets,
-                             Tensor& grad_output,
-                             size_t batch_size) {
-    float total_loss = 0.0f;
-    
-    for (size_t b = 0; b < batch_size; ++b) {
-        for (size_t j = 0; j < 10; ++j) {
-            size_t idx = b * 10 + j;
-            float error = output.data()[idx] - targets[idx];
-            total_loss += error * error;
-            // Gradient scaled by batch size for proper averaging
-            grad_output.data()[idx] = 2.0f * error / batch_size;
-        }
-    }
-    
-    return total_loss / (batch_size * 10);  // Average loss per sample
-}
 
 /**
  * Evaluate accuracy on a dataset (using batching for speed)
@@ -89,13 +68,13 @@ int main() {
         
         std::cout << "Loading training data...\n";
         auto train_data = load_mnist("../MNIST_Data/train-images.idx3-ubyte",
-                                     "../MNIST_Data/train-labels.idx1-ubyte",
-                                     true);  // normalize to [0, 1]
-                      
+                                    "../MNIST_Data/train-labels.idx1-ubyte",
+                                    true);  // normalize to [0, 1]
+        
         std::cout << "Loading test data...\n";
         auto test_data = load_mnist("../MNIST_Data/t10k-images.idx3-ubyte",
-                                    "../MNIST_Data/t10k-labels.idx1-ubyte",
-                                    true);  // normalize to [0, 1]
+                                   "../MNIST_Data/t10k-labels.idx1-ubyte",
+                                   true);
         
         // ============================================================
         // Create Network
@@ -109,18 +88,18 @@ int main() {
         network.add(std::make_shared<Dense>(128, 64, backend));
         network.add(std::make_shared<ReLU>(backend));
         network.add(std::make_shared<Dense>(64, 10, backend));    // Output: 10 classes
-        network.add(std::make_shared<Sigmoid>(backend));
+        network.add(std::make_shared<Softmax>(backend));          // Softmax for probabilities!
         
         std::cout << "Network Architecture:\n";
-        std::cout << "  Input(784) -> Dense(128) -> ReLU -> Dense(64) -> ReLU -> Dense(10) -> Sigmoid\n";
+        std::cout << "  Input(784) -> Dense(128) -> ReLU -> Dense(64) -> ReLU -> Dense(10) -> Softmax\n";
         std::cout << "  Total parameters: ~100K\n\n";
         
         // ============================================================
         // Training Configuration
         // ============================================================
         
-        const int epochs = 5;
-        const float learning_rate = 0.01f;  // Lowered for better convergence
+        const int epochs = 10;
+        const float learning_rate = 0.05f;  // Higher learning rate works better with softmax
         const size_t batch_size = 32;       // Mini-batch size
         const size_t train_samples = 60000;
         const size_t num_batches = (train_samples + batch_size - 1) / batch_size;
@@ -189,11 +168,13 @@ int main() {
                 Tensor output = network.forward(batch_input);
                 
                 // ============================================================
-                // Compute Loss and Gradient
+                // Compute Loss and Gradient (Cross-Entropy)
                 // ============================================================
                 
                 Tensor grad_output({current_batch_size, 10}, backend);
-                float loss = compute_mse_loss_batch(output, batch_targets, grad_output, current_batch_size);
+                float loss = cross_entropy_loss(output, batch_targets, current_batch_size, 10);
+                cross_entropy_gradient(output, batch_targets, grad_output, current_batch_size, 10);
+                
                 epoch_loss += loss * current_batch_size;  // Accumulate total loss
                 
                 // ============================================================
