@@ -1,0 +1,178 @@
+========================================
+  MNIST Digit Classification           
+  (With Mini-Batch Training)           
+========================================
+
+TURNED DEBUG MODE TO RELEASE MODE AND NOW ITS ALOT FASTER!
+
+Loading training data...
+Loading MNIST images...
+  Number of images: 60000
+  Image size: 28x28
+  Loaded 10000 images...
+  Loaded 20000 images...
+  Loaded 30000 images...
+  Loaded 40000 images...
+  Loaded 50000 images...
+  Loaded 60000 images...
+Loading MNIST labels...
+  Number of labels: 60000
+✓ MNIST dataset loaded successfully!
+
+Loading test data...
+Loading MNIST images...
+  Number of images: 10000
+  Image size: 28x28
+  Loaded 10000 images...
+Loading MNIST labels...
+  Number of labels: 10000
+✓ MNIST dataset loaded successfully!
+
+Network Architecture:
+  Input(784) -> Dense(128) -> ReLU -> Dense(64) -> ReLU -> Dense(10) -> Softmax
+  Total parameters: ~100K
+
+Training Configuration:
+  Epochs: 10
+  Learning rate: 0.05
+  Batch size: 32
+  Training samples: 60000
+  Batches per epoch: 1875
+
+Starting training...
+
+=== Epoch 1/10 ===
+  Batch:  300/1875 | Samples:  9600 | Loss: 1.932941
+  Batch:  600/1875 | Samples: 19200 | Loss: 1.382455
+  Batch:  900/1875 | Samples: 28800 | Loss: 1.094648
+  Batch: 1200/1875 | Samples: 38400 | Loss: 0.926211
+  Batch: 1500/1875 | Samples: 48000 | Loss: 0.818506
+  Batch: 1800/1875 | Samples: 57600 | Loss: 0.740433
+  Batch: 1875/1875 | Samples: 60000 | Loss: 0.724023
+  Epoch time: 1 seconds
+  Evaluating...
+  Train Accuracy: 91.41%
+  Test Accuracy: 91.19%
+
+=== Epoch 2/10 ===
+  Batch:  300/1875 | Samples:  9600 | Loss: 0.330757
+  Batch:  600/1875 | Samples: 19200 | Loss: 0.320068
+  Batch:  900/1875 | Samples: 28800 | Loss: 0.312734
+  Batch: 1200/1875 | Samples: 38400 | Loss: 0.308202
+  Batch: 1500/1875 | Samples: 48000 | Loss: 0.305329
+  Batch: 1800/1875 | Samples: 57600 | Loss: 0.300127
+  Batch: 1875/1875 | Samples: 60000 | Loss: 0.298818
+  Epoch time: 0 seconds
+  Evaluating...
+  Train Accuracy: 93.41%
+  Test Accuracy: 93.32%
+
+=== Epoch 3/10 ===
+  Batch:  300/1875 | Samples:  9600 | Loss: 0.264667
+  Batch:  600/1875 | Samples: 19200 | Loss: 0.262804
+  Batch:  900/1875 | Samples: 28800 | Loss: 0.261843
+  Batch: 1200/1875 | Samples: 38400 | Loss: 0.258856
+  Batch: 1500/1875 | Samples: 48000 | Loss: 0.255388
+  Batch: 1800/1875 | Samples: 57600 | Loss: 0.252003
+  Batch: 1875/1875 | Samples: 60000 | Loss: 0.250248
+  Epoch time: 1 seconds
+  Evaluating...
+  Train Accuracy: 94.55%
+  Test Accuracy: 94.18%
+
+=== Epoch 4/10 ===
+  Batch:  300/1875 | Samples:  9600 | Loss: 0.224312
+  Batch:  600/1875 | Samples: 19200 | Loss: 0.226610
+  Batch:  900/1875 | Samples: 28800 | Loss: 0.225256
+  Batch: 1200/1875 | Samples: 38400 | Loss: 0.220849
+  Batch: 1500/1875 | Samples: 48000 | Loss: 0.220469
+  Batch: 1800/1875 | Samples: 57600 | Loss: 0.217529
+  Batch: 1875/1875 | Samples: 60000 | Loss: 0.217521
+  Epoch time: 1 seconds
+  Evaluating...
+  Train Accuracy: 95.13%
+  Test Accuracy: 94.83%
+
+=== Epoch 5/10 ===
+  Batch:  300/1875 | Samples:  9600 | Loss: 0.222071
+  Batch:  600/1875 | Samples: 19200 | Loss: 0.211360
+  Batch:  900/1875 | Samples: 28800 | Loss: 0.204596
+  Batch: 1200/1875 | Samples: 38400 | Loss: 0.199987
+  Batch: 1500/1875 | Samples: 48000 | Loss: 0.196074
+  Batch: 1800/1875 | Samples: 57600 | Loss: 0.194211
+  Batch: 1875/1875 | Samples: 60000 | Loss: 0.193964
+  Epoch time: 1 seconds
+  Evaluating...
+  Train Accuracy: 95.81%
+  Test Accuracy: 95.35%
+
+=== Epoch 6/10 ===
+  Batch:  300/1875 | Samples:  9600 | Loss: 0.186390
+  Batch:  600/1875 | Samples: 19200 | Loss: 0.183493
+  Batch:  900/1875 | Samples: 28800 | Loss: 0.178588
+  Batch: 1200/1875 | Samples: 38400 | Loss: 0.177275
+  Batch: 1500/1875 | Samples: 48000 | Loss: 0.174970
+  Batch: 1800/1875 | Samples: 57600 | Loss: 0.175538
+  Batch: 1875/1875 | Samples: 60000 | Loss: 0.175388
+  Epoch time: 1 seconds
+  Evaluating...
+  Train Accuracy: 96.37%
+  Test Accuracy: 95.64%
+
+=== Epoch 7/10 ===
+  Batch:  300/1875 | Samples:  9600 | Loss: 0.169733
+  Batch:  600/1875 | Samples: 19200 | Loss: 0.169369
+  Batch:  900/1875 | Samples: 28800 | Loss: 0.166565
+  Batch: 1200/1875 | Samples: 38400 | Loss: 0.161306
+  Batch: 1500/1875 | Samples: 48000 | Loss: 0.161365
+  Batch: 1800/1875 | Samples: 57600 | Loss: 0.160890
+  Batch: 1875/1875 | Samples: 60000 | Loss: 0.160100
+  Epoch time: 1 seconds
+  Evaluating...
+  Train Accuracy: 96.43%
+  Test Accuracy: 95.85%
+
+=== Epoch 8/10 ===
+  Batch:  300/1875 | Samples:  9600 | Loss: 0.150194
+  Batch:  600/1875 | Samples: 19200 | Loss: 0.148695
+  Batch:  900/1875 | Samples: 28800 | Loss: 0.149536
+  Batch: 1200/1875 | Samples: 38400 | Loss: 0.148900
+  Batch: 1500/1875 | Samples: 48000 | Loss: 0.147161
+  Batch: 1800/1875 | Samples: 57600 | Loss: 0.148052
+  Batch: 1875/1875 | Samples: 60000 | Loss: 0.147710
+  Epoch time: 1 seconds
+  Evaluating...
+  Train Accuracy: 97.00%
+  Test Accuracy: 96.13%
+
+=== Epoch 9/10 ===
+  Batch:  300/1875 | Samples:  9600 | Loss: 0.145676
+  Batch:  600/1875 | Samples: 19200 | Loss: 0.140450
+  Batch:  900/1875 | Samples: 28800 | Loss: 0.139060
+  Batch: 1200/1875 | Samples: 38400 | Loss: 0.137543
+  Batch: 1500/1875 | Samples: 48000 | Loss: 0.137018
+  Batch: 1800/1875 | Samples: 57600 | Loss: 0.136903
+  Batch: 1875/1875 | Samples: 60000 | Loss: 0.136681
+  Epoch time: 1 seconds
+  Evaluating...
+  Train Accuracy: 97.19%
+  Test Accuracy: 96.51%
+
+=== Epoch 10/10 ===
+  Batch:  300/1875 | Samples:  9600 | Loss: 0.120727
+  Batch:  600/1875 | Samples: 19200 | Loss: 0.127444
+  Batch:  900/1875 | Samples: 28800 | Loss: 0.128193
+  Batch: 1200/1875 | Samples: 38400 | Loss: 0.127790
+  Batch: 1500/1875 | Samples: 48000 | Loss: 0.127142
+  Batch: 1800/1875 | Samples: 57600 | Loss: 0.127250
+  Batch: 1875/1875 | Samples: 60000 | Loss: 0.127810
+  Epoch time: 1 seconds
+  Evaluating...
+  Train Accuracy: 97.45%
+  Test Accuracy: 96.53%
+
+========================================
+  Training Complete!                   
+========================================
+
+Final Test Accuracy: 96.53%
