@@ -18,10 +18,9 @@ struct MNISTDataset {
 /**
  * Load MNIST dataset from binary files.
  * 
- * Files can be downloaded from: http://yann.lecun.com/exdb/mnist/
  * 
- * @param images_path: Path to images file (e.g., "data/train-images-idx3-ubyte")
- * @param labels_path: Path to labels file (e.g., "data/train-labels-idx1-ubyte")
+ * @param images_path: Path to images file 
+ * @param labels_path: Path to labels file 
  * @param normalize: If true, scales pixel values from [0, 255] to [0, 1]
  * @return: MNISTDataset containing images and labels
  */
@@ -30,8 +29,7 @@ MNISTDataset load_mnist(const std::string& images_path,
                         bool normalize = true);
 
 /**
- * Helper: Convert label (0-9) to one-hot encoding
- * Example: 3 -> [0, 0, 0, 1, 0, 0, 0, 0, 0, 0]
+ *  Helper: Convert label (0-9) to one-hot encoded vector
  */
 std::vector<float> label_to_onehot(uint8_t label, size_t num_classes = 10);
 

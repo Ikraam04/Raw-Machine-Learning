@@ -11,10 +11,9 @@
 #include <chrono>
 
 using namespace nn;
-using BackendPtr = std::shared_ptr<Backend>;
-
+using BackendPtr = std::shared_ptr<Backend>;// alias
 /**
- * Evaluate accuracy on a dataset (using batching for speed)
+ * Evaluate accuracy on a dataset (using batching for speed) 
  */
 float evaluate_accuracy(Sequential& network, 
                        const MNISTDataset& dataset,

@@ -60,7 +60,7 @@ Tensor Softmax::forward(const Tensor& input) {
         const float* input_row = input.data() + b * num_classes;
         float* output_row = output.data() + b * num_classes;
         
-        // Find max for numerical stability (prevent overflow)
+        // Find max for numerical stability (prevent large exponentials and overflow)
         float max_val = input_row[0];
         for (size_t i = 1; i < num_classes; ++i) {
             if (input_row[i] > max_val) {
@@ -100,7 +100,7 @@ Tensor Softmax::backward(const Tensor& grad_output) {
         float* grad_in = grad_input.data() + b * num_classes;
         
         // Jacobian matrix computation
-        // grad_input[i] = sum_j (softmax[i] * (δ_ij - softmax[j]) * grad_output[j])
+        // grad_input[i] = sum_j (softmax[i] * (d_ij - softmax[j]) * grad_output[j])
         for (size_t i = 0; i < num_classes; ++i) {
             grad_in[i] = 0.0f;
             for (size_t j = 0; j < num_classes; ++j) {
