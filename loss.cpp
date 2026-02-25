@@ -4,6 +4,41 @@
 
 namespace nn {
 
+float mse_loss(const Tensor& predictions,
+               const std::vector<float>& targets,
+               size_t batch_size,
+               size_t output_dim) 
+               {
+    float total_loss = 0.0f;
+    
+    for (size_t b = 0; b < batch_size; ++b) { // for each sample in batch
+        for (size_t c = 0; c < output_dim; ++c) { // for each output dimension
+            size_t idx = b * output_dim + c; // index in flat vector
+            float pred = predictions.data()[idx]; 
+            float target = targets[idx];
+            total_loss += (pred - target) * (pred - target); // MSE: (pred - target)^2 and then accumulate
+        }
+    }
+    
+    return total_loss / (batch_size * output_dim);  // average over batch and output dimensions
+}
+
+void mse_gradient(const Tensor& predictions,
+                  const std::vector<float>& targets,
+                  Tensor& grad_output,
+                  size_t batch_size,
+                  size_t output_dim) 
+                  {
+    for (size_t b = 0; b < batch_size; ++b) { // for each sample in batch
+        for (size_t c = 0; c < output_dim; ++c) { // for each output dimension
+            size_t idx = b * output_dim + c;
+            float pred = predictions.data()[idx];
+            float target = targets[idx]; 
+            grad_output.data()[idx] = 2.0f * (pred - target) / (batch_size * output_dim);  // gradient of MSE
+        }
+    }
+}
+
 float cross_entropy_loss(const Tensor& predictions,
                         const std::vector<float>& targets,
                         size_t batch_size,
@@ -11,8 +46,8 @@ float cross_entropy_loss(const Tensor& predictions,
     const float epsilon = 1e-7f;  // Prevent log(0)
     float total_loss = 0.0f;
     
-    for (size_t b = 0; b < batch_size; ++b) {
-        for (size_t c = 0; c < num_classes; ++c) {
+    for (size_t b = 0; b < batch_size; ++b) { // for each sample in batch
+        for (size_t c = 0; c < num_classes; ++c) { // for each class in output
             size_t idx = b * num_classes + c;
             float pred = predictions.data()[idx];
             float target = targets[idx];

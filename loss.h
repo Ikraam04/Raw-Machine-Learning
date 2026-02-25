@@ -4,6 +4,49 @@
 
 namespace nn {
 
+// ============================================================
+// Mean Squared Error (MSE) Loss
+// ============================================================
+
+/**
+ * Compute Mean Squared Error Loss.
+ * 
+ * Loss = (1/N) * sum((prediction - target)^2)
+ * 
+ * Used for regression tasks or as alternative for classification.
+ * 
+ * @param predictions: Network output (batch_size x output_dim)
+ * @param targets: Target values (flat vector)
+ * @param batch_size: Number of samples in batch
+ * @param output_dim: Dimension of output (e.g., 10 for MNIST)
+ * @return: Average MSE loss across batch
+ */
+float mse_loss(const Tensor& predictions,
+               const std::vector<float>& targets,
+               size_t batch_size,
+               size_t output_dim);
+
+/**
+ * Compute gradient of MSE loss w.r.t. predictions.
+ * 
+ * Gradient = 2 * (prediction - target) / batch_size
+ * 
+ * @param predictions: Network output
+ * @param targets: Target values
+ * @param grad_output: Output tensor to fill with gradient
+ * @param batch_size: Number of samples
+ * @param output_dim: Output dimension
+ */
+void mse_gradient(const Tensor& predictions,
+                  const std::vector<float>& targets,
+                  Tensor& grad_output,
+                  size_t batch_size,
+                  size_t output_dim);
+
+// ============================================================
+// Cross-Entropy Loss
+// ============================================================
+
 /**
  * Compute Cross-Entropy Loss for classification.
  * 
