@@ -8,22 +8,22 @@ This is a modular neural network framework built from scratch in C++ with suppor
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│                 Application Layer                    │
-│            (Sequential, Training Loops)              │
+│                 Application Layer                   │
+│         (Sequential, Training Loops, Loss eval)     │
 └─────────────────────────────────────────────────────┘
                         ↓
 ┌─────────────────────────────────────────────────────┐
-│                   Layer Layer                        │
+│                   Layer Layer                       │
 │          (Dense, ReLU, Sigmoid, etc.)               │
 └─────────────────────────────────────────────────────┘
                         ↓
 ┌─────────────────────────────────────────────────────┐
-│                  Tensor Layer                        │
+│                  Tensor Layer                       │
 │         (High-level matrix operations)              │
 └─────────────────────────────────────────────────────┘
                         ↓
 ┌─────────────────────────────────────────────────────┐
-│                 Backend Layer                        │
+│                 Backend Layer                       │
 │         (EigenBackend, CudaBackend)                 │
 └─────────────────────────────────────────────────────┘
 ```
@@ -58,14 +58,10 @@ class Backend {
 ```
 
 **Purpose:**
-- Defines the contract: any backend MUST implement these methods
+- implement memmory managment functions as well as matrix operations and activation functions
 - Pure virtual functions (= 0) means you cannot instantiate Backend directly
 - Enables polymorphism: swap CPU/GPU backends transparently
 
-**Key Design Decision:**
-- **Separation of concerns:** Algorithm logic (what to compute) is separate from execution (how/where to compute)
-- **Extensibility:** Add new backends (CUDA, OpenCL, etc.) without changing higher-level code
-- **Testability:** Can create mock backends for unit testing
 
 ---
 
@@ -91,12 +87,6 @@ class EigenBackend : public Backend {
 **Purpose:**
 - Implements all Backend operations for CPU execution
 - Leverages Eigen library for optimized linear algebra
-
-**Why Eigen?**
-- Well-tested, mature library
-- Header-only (easy to integrate)
-- Optimized for modern CPUs (SIMD, cache-friendly)
-- Provides good baseline performance before GPU optimization
 
 ---
 
@@ -139,12 +129,6 @@ public:
 - Raw pointer can point to either CPU or GPU memory
 - Backend handles allocation/deallocation specifics
 
-**Copy vs Move Semantics:**
-```cpp
-Tensor a = b;              // Copy: allocates new memory, copies all data
-Tensor a = std::move(b);   // Move: transfers ownership, no data copy
-```
-
 **Memory Management:**
 - Constructor allocates via `backend_->allocate()`
 - Destructor deallocates via `backend_->deallocate()`
@@ -173,11 +157,6 @@ protected:
 - Defines what every layer must implement: forward pass, backward pass, parameter updates
 - Enables building networks from interchangeable components
 - Provides polymorphic interface for Sequential network
-
-**Why Abstract?**
-- Dense, Conv, ReLU, etc. all behave differently
-- But they all follow the same three-step interface
-- Sequential network can treat all layers uniformly
 
 ---
 
@@ -222,32 +201,30 @@ public:
 ```
 
 **Purpose:**
-- Implements affine transformation: `y = Wx + b`
+- Implements affine transformation: **$y = Wx + b$**
 - Learns optimal W and b through gradient descent
 
 **Key Design Decisions:**
 
 **Why cache input during forward?**
-- Backward pass needs input to compute `grad_W = input^T * grad_output`
-- More efficient to store once than recompute
-
+- Backward pass needs input to compute **$grad_W = input^T * grad_{output}$**
+- More efficient to just store
 **Why separate `grad_weights_` from `weights_`?**
 - Accumulate gradients across mini-batches
-- Enables advanced optimizers (momentum, Adam) that need gradient history
+- Helps when with optimizers
 - Separates gradient computation from parameter updates
 
 **Weight Initialization:**
-- Uses Xavier/Glorot initialization: `U(-sqrt(6/(n_in + n_out)), sqrt(6/(n_in + n_out)))`
-- Helps with gradient flow in deep networks
+- Uses Xavier/Glorot initialization: $U(-\sqrt{(6/(n_{in} + n_{out}))}, \sqrt{(6/(n_{in} + n_{out})))}$
+
 
 ---
 
 ### 6. Activation Layers (`layers/activation.h/cpp`)
 
-**What it is:** Element-wise non-linear transformations.
-
+**What it is and why:** just non linear functions to add non linearity - helps with finding more complex patterns
 #### ReLU (Rectified Linear Unit)
-
+ $$f(x) = max(0,x)$$
 ```cpp
 class ReLU : public Layer {
 private:
@@ -271,7 +248,7 @@ public:
 ```
 
 #### Sigmoid
-
+$$f(x) = \frac{1}{1+e^{-x}}$$
 ```cpp
 class Sigmoid : public Layer {
 private:
@@ -291,6 +268,38 @@ public:
 };
 ```
 
+### Softmax
+
+ $$softmax(z_i) = \frac{e^{z_i}}{\sum_j{e^{z_j}}}$$
+
+```cpp
+class Softmax : public Layer {
+private:
+    Tensor output_cache_;
+    
+public:
+    Tensor forward(const Tensor& input) override {
+        // For each row (batch sample):
+        //   1. Find max for numerical stability
+        //   2. Compute exp(x - max) for each element
+        //   3. Normalize: softmax[i] = exp(x[i]) / sum(exp(x))
+        
+        Tensor output = compute_softmax(input);  // Simplified
+        output_cache_ = output;
+        return output;
+    }
+    
+    Tensor backward(const Tensor& grad_output) override {
+        // Softmax Jacobian: 
+        // grad[i] = sum_j (softmax[i] * (d_ij - softmax[j]) * grad_out[j])
+        // More complex than element-wise due to cross-dependencies
+        
+        return compute_softmax_gradient(output_cache_, grad_output);
+    }
+};
+```
+*full implementation in activation.cpp*
+
 **Purpose:**
 - Add non-linearity to the network (essential for learning complex functions)
 - No learnable parameters (stateless transformations)
@@ -298,7 +307,7 @@ public:
 **Why different caching strategies?**
 - **ReLU:** Derivative depends on **input** (`x > 0 ? 1 : 0`)
 - **Sigmoid:** Derivative depends on **output** (`σ(x) * (1 - σ(x))`)
-- Cache what you need for efficient backward computation
+- **softmax** dont even ask LOL
 
 **Why non-linearity matters:**
 - Without activation functions, stacking layers is just matrix multiplication
@@ -307,7 +316,69 @@ public:
 
 ---
 
-### 7. Sequential Network (`network/sequential.h/cpp`)
+### 7. Loss
+**what it is:** Functions that calculate how "wrong" the network is, not exactly structual (layers) but just a function
+
+#### Mean Squared Error (MSE)
+$$ Loss = \frac{1}{BD}\sum_{b=1}^{B}\sum_{c=1}^{C}(\hat{y}_{b,c} - y_{b,c})$$
+
+```cpp
+float mse_loss(const Tensor& predictions,
+               const std::vector<float>& targets,
+               size_t batch_size,
+               size_t output_dim) 
+               {
+    float total_loss = 0.0f;
+    
+    for (size_t b = 0; b < batch_size; ++b) { // for each sample in batch
+        for (size_t c = 0; c < output_dim; ++c) { // for each output dimension
+            size_t idx = b * output_dim + c; // index in flat vector
+            float pred = predictions.data()[idx]; 
+            float target = targets[idx];
+            total_loss += (pred - target) * (pred - target); // MSE: (pred - target)^2 and then accumulate
+        }
+    }
+    
+    return total_loss / (batch_size * output_dim);  // average over batch and output dimensions
+}
+```
+- assumes input and output are just continious values, literally measures the square distance
+- Used for regression
+
+#### cross entropy loss
+$$Loss = -z\sum_{c=1}^{C}y_{b,c}log(\hat{y}_{b,c}) $$
+
+```cpp
+float cross_entropy_loss(const Tensor& predictions,
+                        const std::vector<float>& targets,
+                        size_t batch_size,
+                        size_t num_classes) {
+    const float epsilon = 1e-7f;  // Prevent log(0)
+    float total_loss = 0.0f;
+    
+    for (size_t b = 0; b < batch_size; ++b) { // for each sample in batch
+        for (size_t c = 0; c < num_classes; ++c) { // for each class in output
+            size_t idx = b * num_classes + c;
+            float pred = predictions.data()[idx];
+            float target = targets[idx];
+            
+            // Only compute loss for true class (target = 1)
+            if (target > 0.5f) {
+                // Clamp prediction to [epsilon, 1 - epsilon]
+                pred = std::max(epsilon, std::min(1.0f - epsilon, pred));
+                total_loss += -std::log(pred);
+            }
+        }
+    }
+    
+    return total_loss / batch_size;  // Average over batch
+}
+```
+ - mainly used for classification 
+ - assumes input (logit) is a valid probability distrubution (after softmax or sigmoid)
+
+
+### 8. Sequential Network (`network/sequential.h/cpp`)
 
 **What it is:** Container that chains layers into a complete network.
 
@@ -482,103 +553,17 @@ network.update_parameters(0.01)
 
 ---
 
-## Design Patterns
-
-### 1. Strategy Pattern (Backend)
-- **Interface:** Backend defines algorithm interface
-- **Strategies:** EigenBackend (CPU), CudaBackend (GPU)
-- **Context:** Tensor uses backend without knowing which implementation
-- **Benefit:** Swap algorithms at runtime without changing client code
-
-### 2. Template Method (Layer)
-- **Base class:** Layer defines skeleton (forward/backward/update)
-- **Subclasses:** Dense, ReLU, etc. implement specific behavior
-- **Benefit:** Consistent interface, customizable behavior
-
-### 3. Composite Pattern (Sequential)
-- **Component:** Layer interface
-- **Leaf:** Dense, ReLU, Sigmoid
-- **Composite:** Sequential (contains multiple layers)
-- **Benefit:** Treat individual layers and compositions uniformly
-
-### 4. RAII (Resource Acquisition Is Initialization)
-- **Acquisition:** Tensor constructor allocates memory
-- **Release:** Tensor destructor deallocates memory
-- **Benefit:** Exception-safe, automatic cleanup, no manual memory management
-
----
-
-## Design Principles
-
-### Separation of Concerns
-- **Backend:** How to compute (CPU vs GPU)
-- **Tensor:** What data structure (shape, operations)
-- **Layer:** What neural network operation (dense, activation)
-- **Sequential:** How to compose layers
-
-### Single Responsibility
-- Backend: Only handles low-level computation
-- Tensor: Only handles data storage and high-level operations
-- Layer: Only handles forward/backward for one operation
-- Sequential: Only handles composition
-
-### Open/Closed Principle
-- Open for extension: Add new backends, layers without modifying existing code
-- Closed for modification: Existing components don't change when extending
-
-### Dependency Inversion
-- High-level modules (Tensor, Layer) depend on abstractions (Backend interface)
-- Low-level modules (EigenBackend) implement abstractions
-- Neither depends on the other's concrete implementation
-
----
-
-## Why This Architecture?
-
-### Modularity
-- Each component has one clear responsibility
-- Components are loosely coupled
-- Easy to understand and modify individual parts
-
-### Extensibility
-Add new functionality without modifying existing code:
-- **New backend?** Implement Backend interface → works with all existing code
-- **New layer type?** Inherit from Layer → works with Sequential
-- **New network architecture?** Use Sequential or create new composer
-
-### Testability
-Each component can be tested independently:
-- Test backend operations in isolation
-- Test tensor operations with mock backend
-- Test layers with known inputs/gradients
-- Test networks with simple datasets (XOR)
-
-### Performance
-- Backend abstraction allows swapping CPU/GPU without code changes
-- Virtual function overhead is negligible (~1 pointer dereference)
-- Actual computation (matmul, etc.) dominates runtime by orders of magnitude
-- Eigen provides SIMD optimizations on CPU
-- Future CUDA backend will leverage GPU parallelism
-
-### Maintainability
-- Clear separation of concerns makes debugging easier
-- Each class has well-defined responsibility
-- Data flow is explicit and traceable
-- Modern C++ features (smart pointers) prevent memory leaks
-
----
-
 ## Current Capabilities
 
 ### What Works Now
-- ✅ Complete forward and backward propagation
-- ✅ Gradient descent optimization
-- ✅ Dense (fully-connected) layers
-- ✅ ReLU and Sigmoid activations
-- ✅ Sequential network composition
-- ✅ CPU execution via Eigen backend
-- ✅ Trains and solves XOR problem (non-linear classification)
-- ✅ Proper memory management (no leaks)
+- Complete forward and backward propagation
+- Gradient descent optimization
+- Dense (fully-connected) layers
+- ReLU and Sigmoid activations
+- Sequential network composition
+- CPU execution via Eigen backend
+- Trains and solves XOR problem (non-linear classification)
+- Trains and solves MNIST
 
 ### Training Example (XOR)
 
@@ -606,141 +591,7 @@ for (int epoch = 0; epoch < 10000; ++epoch) {
 
 ---
 
-## Future Extensions
 
-### 1. CUDA Backend (Next Step!)
-
-```cpp
-class CudaBackend : public Backend {
-    float* allocate(size_t size) override {
-        float* ptr;
-        cudaMalloc(&ptr, size * sizeof(float));  // GPU memory
-        return ptr;
-    }
-    
-    void matmul(...) override {
-        // Launch CUDA kernel
-        dim3 grid(...), block(...);
-        matmul_kernel<<<grid, block>>>(...);
-        cudaDeviceSynchronize();
-    }
-    
-    void deallocate(float* ptr) override {
-        cudaFree(ptr);
-    }
-};
-```
-
-**Impact:** Everything else stays the same! Just swap backend:
-```cpp
-auto backend = std::make_shared<CudaBackend>();  // Was EigenBackend
-// All existing code works on GPU now!
-```
-
-### 2. Additional Layer Types
-- **Convolutional layers:** For computer vision
-- **Pooling layers:** MaxPool, AvgPool
-- **Dropout:** Regularization
-- **Batch Normalization:** Training stability
-- **LSTM/GRU:** Sequence modeling
-
-### 3. Advanced Optimizers
-```cpp
-class Optimizer {
-    virtual void step(std::vector<Tensor*> parameters) = 0;
-};
-
-class SGD : public Optimizer { /* momentum */ };
-class Adam : public Optimizer { /* adaptive learning rates */ };
-class RMSprop : public Optimizer { /* ... */ };
-```
-
-### 4. Loss Functions
-```cpp
-class Loss {
-    virtual Tensor forward(const Tensor& pred, const Tensor& target) = 0;
-    virtual Tensor backward() = 0;
-};
-
-class MSELoss : public Loss { /* Mean squared error */ };
-class CrossEntropyLoss : public Loss { /* Classification */ };
-```
-
-### 5. Data Pipeline
-- Mini-batch creation
-- Data shuffling
-- Data augmentation (for images)
-- Parallel data loading
-
-### 6. Model Serialization
-- Save trained weights to disk
-- Load pre-trained models
-- Transfer learning support
-
-### 7. Real Datasets
-- **MNIST:** Handwritten digit recognition (28x28 grayscale images)
-- **CIFAR-10:** Object classification (32x32 color images)
-- **ImageNet:** Large-scale image classification
-
----
-
-## Performance Considerations
-
-### Current Performance (CPU)
-- Eigen uses SIMD instructions (SSE, AVX)
-- Cache-friendly memory access patterns
-- Optimized BLAS routines for matrix operations
-- Good for prototyping and small models
-
-### Expected Performance (GPU with CUDA)
-- 10-100x speedup for large matrix operations
-- Batch processing is crucial (leverage parallelism)
-- Memory transfers (CPU ↔ GPU) can be bottleneck
-- Need proper kernel optimization (memory coalescing, shared memory)
-
-### Optimization Strategies (Future)
-- **Kernel fusion:** Combine multiple operations into one kernel
-- **Memory pooling:** Reuse allocated memory
-- **Mixed precision:** FP16 for speed, FP32 for stability
-- **Graph optimization:** Eliminate redundant operations
-- **Asynchronous execution:** Overlap computation and memory transfers
-
----
-
-## Project Structure
-
-```
-neural_net/
-├── include/
-│   ├── backend/
-│   │   ├── backend_interface.h    # Abstract backend interface
-│   │   └── eigen_backend.h        # CPU implementation
-│   ├── core/
-│   │   └── tensor.h               # Tensor abstraction
-│   ├── layers/
-│   │   ├── layer.h                # Abstract layer interface
-│   │   ├── dense.h                # Fully-connected layer
-│   │   └── activation.h           # ReLU, Sigmoid
-│   └── network/
-│       └── sequential.h           # Network container
-├── src/
-│   ├── backend/
-│   │   └── eigen_backend.cpp
-│   ├── core/
-│   │   └── tensor.cpp
-│   ├── layers/
-│   │   ├── dense.cpp
-│   │   └── activation.cpp
-│   └── network/
-│       └── sequential.cpp
-└── tests/
-    ├── test_eigen_backend.cpp     # Backend unit tests
-    ├── test_tensor.cpp            # Tensor unit tests
-    ├── test_dense.cpp             # Layer unit tests
-    └── test_xor.cpp               # End-to-end training test
-```
-
----
 
 ## Key Takeaways
 
@@ -755,10 +606,3 @@ This architecture mirrors production frameworks (PyTorch, TensorFlow) in design 
 
 ---
 
-## References & Learning Resources
-
-- **Eigen Documentation:** https://eigen.tuxfamily.org/
-- **CUDA Programming Guide:** https://docs.nvidia.com/cuda/
-- **Neural Networks and Deep Learning:** http://neuralnetworksanddeeplearning.com/
-- **C++ Smart Pointers:** https://en.cppreference.com/w/cpp/memory
-- **Design Patterns (GoF):** "Design Patterns: Elements of Reusable Object-Oriented Software"
