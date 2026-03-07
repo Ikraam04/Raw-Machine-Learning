@@ -5,9 +5,7 @@
 
 namespace nn {
 
-// ============================================================
-// Memory Management
-// ============================================================
+// memory
 
 float* EigenBackend::allocate(size_t size) {
     return new float[size];
@@ -25,15 +23,12 @@ void EigenBackend::fill(float* data, float value, size_t size) {
     std::fill(data, data + size, value);
 }
 
-// ============================================================
-// Matrix Operations
-// ============================================================
+// matrix ops
 
 void EigenBackend::matmul(float* result,
                           const float* A, size_t A_rows, size_t A_cols,
                           const float* B, size_t B_rows, size_t B_cols) {
-    // Map raw pointers to Eigen matrices (no copy - just wraps the pointer)
-    // RowMajor means data is stored row-by-row: [row0][row1][row2]...
+    // wrap raw pointers as Eigen matrices (no copy), RowMajor = row-by-row storage
     Eigen::Map<const Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>>
         mat_A(A, A_rows, A_cols);
     
@@ -43,7 +38,6 @@ void EigenBackend::matmul(float* result,
     Eigen::Map<Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>>
         mat_result(result, A_rows, B_cols);
     
-    // Eigen handles the matrix multiplication efficiently
     mat_result = mat_A * mat_B;
 }
 
@@ -58,9 +52,7 @@ void EigenBackend::transpose(float* result,
     mat_result = mat_A.transpose();
 }
 
-// ============================================================
-// Element-wise Operations
-// ============================================================
+// element-wise ops
 
 void EigenBackend::add(float* result,
                        const float* A, const float* B, size_t size) {
@@ -83,9 +75,7 @@ void EigenBackend::scale(float* result,
     }
 }
 
-// ============================================================
-// Activation Functions
-// ============================================================
+// activations
 
 void EigenBackend::relu(float* result, const float* A, size_t size) {
     for (size_t i = 0; i < size; ++i) {
@@ -106,7 +96,7 @@ void EigenBackend::sigmoid(float* result, const float* A, size_t size) {
 }
 
 void EigenBackend::sigmoid_derivative(float* result, const float* A, size_t size) {
-    // Assumes A contains sigmoid outputs already
+    // A[i] is already sigmoid(x), not the raw input
     for (size_t i = 0; i < size; ++i) {
         result[i] = A[i] * (1.0f - A[i]);
     }

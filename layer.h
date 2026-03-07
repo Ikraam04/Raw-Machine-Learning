@@ -4,50 +4,28 @@
 
 namespace nn {
 
-/**
- * Abstract base class for all neural network layers.
- * 
- * A layer takes an input tensor, applies a transformation,
- * and produces an output tensor. During training, it also
- * computes gradients via backpropagation.
- */
+// base class for all layers - takes input tensor, applies transform, returns output
+// during training it also computes gradients for backprop
 class Layer {
 public:
     using BackendPtr = std::shared_ptr<Backend>;
-    
+
     Layer(BackendPtr backend) : backend_(backend) {}
     virtual ~Layer() = default;
-    
-    /**
-     * Forward pass: compute output from input.
-     * The layer should cache any values needed for backward pass.
-     * 
-     * @param input: Input tensor (batch_size x input_dim)
-     * @return: Output tensor (batch_size x output_dim)
-     */
+
+    // forward pass: input (batch_size x input_dim) -> output (batch_size x output_dim)
+    // should cache anything needed for backward
     virtual Tensor forward(const Tensor& input) = 0;
-    
-    /**
-     * Backward pass: compute gradient with respect to input.
-     * Also updates internal gradients for learnable parameters.
-     * 
-     * @param grad_output: Gradient flowing back from next layer
-     * @return: Gradient with respect to this layer's input
-     */
+
+    // backward pass: takes grad from next layer, returns grad w.r.t. this layer's input
+    // also accumulates grads for any learnable params
     virtual Tensor backward(const Tensor& grad_output) = 0;
-    
-    /**
-     * Update learnable parameters using computed gradients.
-     * 
-     * @param learning_rate: Step size for gradient descent
-     */
+
+    // apply gradient descent to learnable params
     virtual void update_parameters(float learning_rate) = 0;
-    
-    /**
-     * Get the backend used by this layer.
-     */
+
     BackendPtr backend() const { return backend_; }
-    
+
 protected:
     BackendPtr backend_;
 };

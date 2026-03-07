@@ -3,114 +3,62 @@
 
 namespace nn {
 
-/**
- * ReLU Activation Layer
- * 
- * Forward: f(x) = max(0, x)
- * Backward: f'(x) = 1 if x > 0, else 0
- * 
- * No learnable parameters, so update_parameters does nothing.
- */
+// f(x) = max(0, x), f'(x) = 1 if x > 0 else 0
+// no learnable params
 class ReLU : public Layer {
 public:
-    ReLU(BackendPtr backend) : Layer(backend), input_cache_({1,1}, backend)  {}
-    
-    /**
-     * Forward pass: apply ReLU element-wise
-     */
+    ReLU(BackendPtr backend) : Layer(backend), input_cache_({1,1}, backend) {}
+
     Tensor forward(const Tensor& input) override;
-    
-    /**
-     * Backward pass: multiply gradient by ReLU derivative
-     */
-    Tensor backward(const Tensor& grad_output) override;
-    
-    /**
-     * No parameters to update
-     */
+    Tensor backward(const Tensor& grad_output) override;  // grad * relu'(input)
+
     void update_parameters(float learning_rate) override {
-        // ReLU has no learnable parameters
-        (void)learning_rate;  // Suppress unused parameter warning
+        (void)learning_rate;  // nothing to update
     }
-    
+
 private:
-    Tensor input_cache_;  // Cache input for backward pass
+    Tensor input_cache_;  // needed in backward to recompute the derivative
 };
 
-/**
- * Sigmoid Activation Layer
- * 
- * Forward: f(x) = 1 / (1 + exp(-x))
- * Backward: f'(x) = f(x) * (1 - f(x))
- * 
- * No learnable parameters.
- */
+// f(x) = 1 / (1 + exp(-x)), f'(x) = f(x) * (1 - f(x))
+// no learnable params
 class Sigmoid : public Layer {
 public:
     Sigmoid(BackendPtr backend) : Layer(backend), output_cache_({1,1}, backend) {}
-    
-    /**
-     * Forward pass: apply sigmoid element-wise
-     */
+
     Tensor forward(const Tensor& input) override;
-    
-    /**
-     * Backward pass: multiply gradient by sigmoid derivative
-     */
-    Tensor backward(const Tensor& grad_output) override;
-    
-    /**
-     * No parameters to update
-     */
+    Tensor backward(const Tensor& grad_output) override;  // grad * sigmoid'(input)
+
     void update_parameters(float learning_rate) override {
         (void)learning_rate;
     }
-    
+
 private:
-    Tensor output_cache_;  // Cache output for backward pass
+    Tensor output_cache_;  // cache output (not input) since derivative uses sigmoid(x)
 };
 
-
-/**
- * Softmax Activation Layer
- * 
- * Forward: softmax(x_i) = exp(x_i) / sum(exp(x_j))
- * 
- * Converts logits to probability distribution (outputs sum to 1).
- * Used for multi-class classification.
- * 
- * Note: Backward pass is typically fused with Cross-Entropy loss
- * for numerical stability, but we provide standalone version here.
- */
+// softmax(x_i) = exp(x_i) / sum(exp(x_j)) per row
+// turns raw logits into a probability distribution (rows sum to 1)
+// normally you'd fuse this with cross-entropy for stability, but standalone works too
 class Softmax : public Layer {
 public:
     Softmax(BackendPtr backend)
         : Layer(backend),
           output_cache_({1, 1}, backend) {}
-    
-    /**
-     * Forward pass: apply softmax across each row (sample)
-     * For batch of N samples with C classes: (N, C) -> (N, C)
-     * Each row sums to 1.0
-     */
+
+    // (N, C) -> (N, C), each row sums to 1
     Tensor forward(const Tensor& input) override;
-    
-    /**
-     * Backward pass: compute Jacobian and apply chain rule
-     * grad_input[i] = sum_j (softmax[i] * (δ_ij - softmax[j]) * grad_output[j])
-     * where δ_ij is Kronecker delta
-     */
+
+    // full Jacobian: grad_input[i] = sum_j(softmax[i] * (d_ij - softmax[j]) * grad_output[j])
+    // d_ij = 1 if i==j else 0 (Kronecker delta)
     Tensor backward(const Tensor& grad_output) override;
-    
-    /**
-     * No parameters to update
-     */
+
     void update_parameters(float learning_rate) override {
         (void)learning_rate;
     }
-    
+
 private:
-    Tensor output_cache_;  // Cache softmax output for backward pass
+    Tensor output_cache_;  // softmax output saved for backward
 };
 
 } //namespace nn

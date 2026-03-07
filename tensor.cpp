@@ -5,10 +5,6 @@
 
 namespace nn {
 
-// ============================================================
-// Constructors and Destructor
-// ============================================================
-
 Tensor::Tensor(const std::vector<size_t>& shape, BackendPtr backend)
     : shape_(shape), backend_(backend) {
     size_ = compute_size();
@@ -26,19 +22,16 @@ Tensor::Tensor(Tensor&& other) noexcept
       size_(other.size_),
       data_(other.data_),
       backend_(std::move(other.backend_)) {
-    // Nullify the moved-from object
-    other.data_ = nullptr;
+    other.data_ = nullptr;  // don't double-free
     other.size_ = 0;
 }
 
 Tensor& Tensor::operator=(const Tensor& other) {
     if (this != &other) {
-        // Clean up old data
         if (data_ && backend_) {
             backend_->deallocate(data_);
         }
-        
-        // Copy from other
+
         shape_ = other.shape_;
         size_ = other.size_;
         backend_ = other.backend_;
@@ -50,18 +43,15 @@ Tensor& Tensor::operator=(const Tensor& other) {
 
 Tensor& Tensor::operator=(Tensor&& other) noexcept {
     if (this != &other) {
-        // Clean up old data
         if (data_ && backend_) {
             backend_->deallocate(data_);
         }
-        
-        // Move from other
+
         shape_ = std::move(other.shape_);
         size_ = other.size_;
         data_ = other.data_;
         backend_ = std::move(other.backend_);
-        
-        // Nullify the moved-from object
+
         other.data_ = nullptr;
         other.size_ = 0;
     }
@@ -73,10 +63,6 @@ Tensor::~Tensor() {
         backend_->deallocate(data_);
     }
 }
-
-// ============================================================
-// Data Manipulation
-// ============================================================
 
 void Tensor::fill(float value) {
     backend_->fill(data_, value, size_);
@@ -94,10 +80,6 @@ void Tensor::set_data(const float* src, size_t count) {
 void Tensor::set_data(const std::vector<float>& src) {
     set_data(src.data(), src.size());
 }
-
-// ============================================================
-// Matrix Operations
-// ============================================================
 
 Tensor Tensor::matmul(const Tensor& other) const {
     check_same_backend(other);
@@ -153,10 +135,6 @@ Tensor Tensor::transpose() const {
     return result;
 }
 
-// ============================================================
-// In-place Operations
-// ============================================================
-
 void Tensor::add_(const Tensor& other) {
     check_same_backend(other);
     
@@ -170,10 +148,6 @@ void Tensor::add_(const Tensor& other) {
 void Tensor::multiply_(float scalar) {
     backend_->scale(data_, data_, scalar, size_);
 }
-
-// ============================================================
-// Activation Functions
-// ============================================================
 
 Tensor Tensor::relu() const {
     Tensor result(shape_, backend_);
@@ -199,10 +173,6 @@ Tensor Tensor::sigmoid_derivative() const {
     return result;
 }
 
-// ============================================================
-// Utility
-// ============================================================
-
 void Tensor::print(const char* name) const {
     std::cout << name << " (shape=[";
     for (size_t i = 0; i < shape_.size(); ++i) {
@@ -212,7 +182,6 @@ void Tensor::print(const char* name) const {
     std::cout << "]):\n";
     
     if (shape_.size() == 2) {
-        // Print as matrix
         for (size_t i = 0; i < rows(); ++i) {
             std::cout << "  ";
             for (size_t j = 0; j < cols(); ++j) {
@@ -221,7 +190,6 @@ void Tensor::print(const char* name) const {
             std::cout << "\n";
         }
     } else if (shape_.size() == 1) {
-        // Print as vector
         std::cout << "  [";
         for (size_t i = 0; i < std::min(size_, size_t(10)); ++i) {
             std::cout << data_[i];
@@ -230,7 +198,6 @@ void Tensor::print(const char* name) const {
         if (size_ > 10) std::cout << ", ...";
         std::cout << "]\n";
     } else {
-        // Print first few elements
         std::cout << "  [";
         for (size_t i = 0; i < std::min(size_, size_t(10)); ++i) {
             std::cout << data_[i];
@@ -241,10 +208,6 @@ void Tensor::print(const char* name) const {
     }
     std::cout << "\n";
 }
-
-// ============================================================
-// Private Helper Methods
-// ============================================================
 
 size_t Tensor::compute_size() const {
     if (shape_.empty()) return 0;

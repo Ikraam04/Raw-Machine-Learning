@@ -6,13 +6,13 @@
 
 namespace nn {
 
-// Helper: Read 32-bit big-endian integer from file
+// read 32-bit big-endian int from file (MNIST files use big-endian)
 static uint32_t read_int32(std::ifstream& file) {
     uint32_t value = 0;
     uint8_t bytes[4];
     file.read(reinterpret_cast<char*>(bytes), 4);
     
-    // Convert from big-endian to host byte order
+    // swap bytes to convert big-endian -> host byte order
     value = (bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | bytes[3];
     return value;
 }
@@ -22,16 +22,12 @@ MNISTDataset load_mnist(const std::string& images_path,
                         bool normalize) {
     MNISTDataset dataset;
     
-    // ============================================================
-    // Load Images
-    // ============================================================
-    
     std::ifstream images_file(images_path, std::ios::binary);
     if (!images_file.is_open()) {
         throw std::runtime_error("Could not open images file: " + images_path);
     }
     
-    // Read header
+    // check magic number in header to make sure it's the right file format
     uint32_t magic_number = read_int32(images_file);
     if (magic_number != 2051) {
         throw std::runtime_error("Invalid magic number in images file. Expected 2051, got " + 
@@ -50,28 +46,23 @@ MNISTDataset load_mnist(const std::string& images_path,
         throw std::runtime_error("Expected 28x28 images");
     }
     
-    // Read pixel data
     dataset.images.resize(num_images);
     const size_t image_size = num_rows * num_cols;
-    
+
     for (size_t i = 0; i < num_images; ++i) {
         dataset.images[i].resize(image_size);
-        
-        // Read raw bytes
+
         std::vector<uint8_t> pixels(image_size);
         images_file.read(reinterpret_cast<char*>(pixels.data()), image_size);
-        
-        // Convert to float and optionally normalize
+
         for (size_t j = 0; j < image_size; ++j) {
             if (normalize) {
-                // Scale from [0, 255] to [0, 1]
-                dataset.images[i][j] = pixels[j] / 255.0f;
+                dataset.images[i][j] = pixels[j] / 255.0f;  // scale to [0, 1]
             } else {
                 dataset.images[i][j] = static_cast<float>(pixels[j]);
             }
         }
-        
-        // Progress indicator
+
         if ((i + 1) % 10000 == 0) {
             std::cout << "  Loaded " << (i + 1) << " images...\n";
         }
@@ -79,16 +70,11 @@ MNISTDataset load_mnist(const std::string& images_path,
     
     images_file.close();
     
-    // ============================================================
-    // Load Labels
-    // ============================================================
-    
     std::ifstream labels_file(labels_path, std::ios::binary);
     if (!labels_file.is_open()) {
         throw std::runtime_error("Could not open labels file: " + labels_path);
     }
     
-    // Read header
     magic_number = read_int32(labels_file);
     if (magic_number != 2049) {
         throw std::runtime_error("Invalid magic number in labels file. Expected 2049, got " + 
@@ -104,13 +90,12 @@ MNISTDataset load_mnist(const std::string& images_path,
     std::cout << "Loading MNIST labels...\n";
     std::cout << "  Number of labels: " << num_labels << "\n";
     
-    // Read label data
     dataset.labels.resize(num_labels);
     labels_file.read(reinterpret_cast<char*>(dataset.labels.data()), num_labels);
-    
+
     labels_file.close();
-    
-    std::cout << "✓ MNIST dataset loaded successfully!\n\n";
+
+    std::cout << "done.\n\n";
     
     return dataset;
 }
@@ -131,7 +116,6 @@ uint8_t predict_class(const std::vector<float>& output) {
         throw std::runtime_error("Cannot predict class from empty output");
     }
     
-    // Find index of maximum value
     auto max_it = std::max_element(output.begin(), output.end());
     return static_cast<uint8_t>(std::distance(output.begin(), max_it));
 }
