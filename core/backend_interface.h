@@ -61,6 +61,24 @@ public:
 
     // result[i] = sigmoid(A[i]) * (1 - sigmoid(A[i])), assumes A[i] is already sigmoid output
     virtual void sigmoid_derivative(float* result, const float* A, size_t size) = 0;
+
+    // conv ops (used by Conv2D layer)
+
+    // im2col: unrolls input receptive fields into a matrix so conv becomes matmul
+    // input:  (batch, in_channels, height, width) flat NCHW
+    // col:    (batch*out_h*out_w, in_channels*kernel_h*kernel_w) — caller pre-allocates
+    // out-of-bounds positions (from padding) are filled with 0
+    virtual void im2col(const float* input, float* col,
+                        int batch, int in_channels, int height, int width,
+                        int kernel_h, int kernel_w, int out_h, int out_w,
+                        int pad_h, int pad_w, int stride_h, int stride_w) = 0;
+
+    // col2im: accumulates col back into input (reverse of im2col, used in backward)
+    // input must be zeroed before calling — this function *adds* into it
+    virtual void col2im(const float* col, float* input,
+                        int batch, int in_channels, int height, int width,
+                        int kernel_h, int kernel_w, int out_h, int out_w,
+                        int pad_h, int pad_w, int stride_h, int stride_w) = 0;
 };
 
 } // namespace nn

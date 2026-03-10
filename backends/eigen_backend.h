@@ -1,5 +1,5 @@
 #pragma once
-#include "backend_interface.h"
+#include "core/backend_interface.h"
 
 namespace nn {
 
@@ -38,6 +38,17 @@ public:
     void relu_derivative(float* result, const float* A, size_t size) override;
     void sigmoid(float* result, const float* A, size_t size) override;
     void sigmoid_derivative(float* result, const float* A, size_t size) override;
+
+    // conv ops
+    void im2col(const float* input, float* col,
+                int batch, int in_channels, int height, int width,
+                int kernel_h, int kernel_w, int out_h, int out_w,
+                int pad_h, int pad_w, int stride_h, int stride_w) override;
+
+    void col2im(const float* col, float* input,
+                int batch, int in_channels, int height, int width,
+                int kernel_h, int kernel_w, int out_h, int out_w,
+                int pad_h, int pad_w, int stride_h, int stride_w) override;
 };
 
 } // namespace nn
