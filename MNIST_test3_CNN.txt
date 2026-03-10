@@ -1,0 +1,160 @@
+============================================================
+  MNIST digit classification — CNN
+============================================================
+
+Loading data...
+Loading MNIST images...
+  Number of images: 60000
+  Image size: 28x28
+  Loaded 10000 images...
+  Loaded 20000 images...
+  Loaded 30000 images...
+  Loaded 40000 images...
+  Loaded 50000 images...
+  Loaded 60000 images...
+Loading MNIST labels...
+  Number of labels: 60000
+done.
+
+Loading MNIST images...
+  Number of images: 10000
+  Image size: 28x28
+  Loaded 10000 images...
+Loading MNIST labels...
+  Number of labels: 10000
+done.
+
+  train : 60000 images
+  test  : 10000 images
+  format: 28x28, 1 channel, normalised [0,1]
+  loaded in 0.13s
+
+Architecture:
+  input              1  x 28 x 28
+  Conv2D (3x3 p=1)    1 -> 32   output: 32 x 28 x 28   params: 320
+  ReLU
+  MaxPool2D (2x2)         output: 32 x 14 x 14
+  Conv2D (3x3 p=1)   32 -> 64   output: 64 x 14 x 14   params: 18496
+  ReLU
+  MaxPool2D (2x2)         output: 64 x 7 x 7
+  Flatten                 output: 3136
+  Dense              3136 -> 128   params: 401536
+  ReLU
+  Dense               128 -> 10      params: 1290
+  Softmax
+  ------------------------------------------------------------
+  total trainable params: 421642
+
+Hyperparameters:
+  epochs      : 10
+  batch size  : 32
+  learning rate: 0.01
+  batches/epoch: 1875
+
+============================================================
+  Training
+============================================================
+
+Epoch 1/10
+  [==============================] 1875/1875  loss: 1.4471  
+  avg loss : 1.4471
+  train acc: 88.73%
+  test  acc: 89.17%  <-- best
+  time     : 59.7s
+
+Epoch 2/10
+  [==============================] 1875/1875  loss: 0.3480  
+  avg loss : 0.3480
+  train acc: 91.52%
+  test  acc: 91.71%  <-- best
+  time     : 49.2s
+
+Epoch 3/10
+  [==============================] 1875/1875  loss: 0.2606  
+  avg loss : 0.2606
+  train acc: 93.53%
+  test  acc: 93.52%  <-- best
+  time     : 48.5s
+
+Epoch 4/10
+  [==============================] 1875/1875  loss: 0.2133  
+  avg loss : 0.2133
+  train acc: 94.56%
+  test  acc: 94.53%  <-- best
+  time     : 51.3s
+
+Epoch 5/10
+  [==============================] 1875/1875  loss: 0.1798  
+  avg loss : 0.1798
+  train acc: 96.02%
+  test  acc: 96.12%  <-- best
+  time     : 48.8s
+
+Epoch 6/10
+  [==============================] 1875/1875  loss: 0.1537  
+  avg loss : 0.1537
+  train acc: 96.29%
+  test  acc: 96.06%
+  time     : 50.3s
+
+Epoch 7/10
+  [==============================] 1875/1875  loss: 0.1340  
+  avg loss : 0.1340
+  train acc: 96.96%
+  test  acc: 96.92%  <-- best
+  time     : 51.4s
+
+Epoch 8/10
+  [==============================] 1875/1875  loss: 0.1195  
+  avg loss : 0.1195
+  train acc: 97.30%
+  test  acc: 97.21%  <-- best
+  time     : 52.6s
+
+Epoch 9/10
+  [==============================] 1875/1875  loss: 0.1082  
+  avg loss : 0.1082
+  train acc: 97.44%
+  test  acc: 97.39%  <-- best
+  time     : 53.3s
+
+Epoch 10/10
+  [==============================] 1875/1875  loss: 0.0997  
+  avg loss : 0.0997
+  train acc: 97.79%
+  test  acc: 97.47%  <-- best
+  time     : 53.2s
+
+============================================================
+  Results
+============================================================
+
+  final test accuracy : 97.47%
+  best  test accuracy : 97.47%
+
+  Sample predictions (first 20 test images):
+
+  img | true | pred | confidence
+  ----|------|------|------------
+    0 |    7 |    7 | 0.999  ok
+    1 |    2 |    2 | 0.999  ok
+    2 |    1 |    1 | 0.980  ok
+    3 |    0 |    0 | 1.000  ok
+    4 |    4 |    4 | 0.992  ok
+    5 |    1 |    1 | 0.985  ok
+    6 |    4 |    4 | 0.990  ok
+    7 |    9 |    9 | 0.979  ok
+    8 |    5 |    5 | 0.889  ok
+    9 |    9 |    9 | 0.975  ok
+   10 |    0 |    0 | 1.000  ok
+   11 |    6 |    6 | 0.979  ok
+   12 |    9 |    9 | 0.973  ok
+   13 |    0 |    0 | 1.000  ok
+   14 |    1 |    1 | 0.997  ok
+   15 |    5 |    5 | 0.995  ok
+   16 |    9 |    9 | 0.987  ok
+   17 |    7 |    7 | 0.999  ok
+   18 |    3 |    3 | 0.832  ok
+   19 |    4 |    4 | 0.999  ok
+
+done.
