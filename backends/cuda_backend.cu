@@ -18,11 +18,33 @@
 
 
 __global__ void fill_kernel(float* dst, float value, size_t size) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x; // global thread index
-    if (idx < size) { // bounds check   
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < size) {
         dst[idx] = value;
     }
 }
+
+__global__ void add_kernel(float* result, const float* A, const float* B, size_t size) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < size) {
+        result[idx] = A[idx] + B[idx];
+    }
+}
+
+__global__ void multiply_kernel(float* result, const float* A, const float* B, size_t size) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < size) {
+        result[idx] = A[idx] * B[idx];
+    }
+}
+
+__global__ void scale_kernel(float* result, const float* A, float scalar, size_t size) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < size) {
+        result[idx] = A[idx] * scalar;
+    }
+}
+
 
 namespace nn
 {
@@ -55,6 +77,22 @@ void CudaBackend::fill(float* dst, float value, size_t size) {
     CUDA_CHECK(cudaDeviceSynchronize());
 }
 
+
+void CudaBackend::add(float* result, const float* A, const float* B, size_t size) {
+    add_kernel<<<(size + 255) / 256, 256>>>(result, A, B, size);
+    CUDA_CHECK(cudaDeviceSynchronize());
+}
+
+void CudaBackend::multiply(float* result, const float* A, const float* B, size_t size) {
+    multiply_kernel<<<(size + 255) / 256, 256>>>(result, A, B, size);
+    CUDA_CHECK(cudaDeviceSynchronize());
+}
+
+void CudaBackend::scale(float* result, const float* A, float scalar, size_t size) {
+    scale_kernel<<<(size + 255) / 256, 256>>>(result, A, scalar, size);
+    CUDA_CHECK(cudaDeviceSynchronize());
+}
+
 //stubs, not implemented yet.
 
 void CudaBackend::matmul(float*, const float*, size_t, size_t, const float*, size_t, size_t) {
@@ -63,18 +101,6 @@ void CudaBackend::matmul(float*, const float*, size_t, size_t, const float*, siz
 
 void CudaBackend::transpose(float*, const float*, size_t, size_t) {
     throw std::runtime_error("CudaBackend::transpose not implemented");
-}
-
-void CudaBackend::add(float*, const float*, const float*, size_t) {
-    throw std::runtime_error("CudaBackend::add not implemented");
-}
-
-void CudaBackend::multiply(float*, const float*, const float*, size_t) {
-    throw std::runtime_error("CudaBackend::multiply not implemented");
-}
-
-void CudaBackend::scale(float*, const float*, float, size_t) {
-    throw std::runtime_error("CudaBackend::scale not implemented");
 }
 
 void CudaBackend::relu(float*, const float*, size_t) {
