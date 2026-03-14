@@ -45,6 +45,36 @@ __global__ void scale_kernel(float* result, const float* A, float scalar, size_t
     }
 }
 
+__global__ void relu_kernel(float* result, const float* A, size_t size) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < size) {
+        result[idx] = fmaxf(0.0f, A[idx]);
+    }
+}
+
+// A[i] is the pre-activation value (not the relu output)
+__global__ void relu_derivative_kernel(float* result, const float* A, size_t size) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < size) {
+        result[idx] = A[idx] > 0.0f ? 1.0f : 0.0f;
+    }
+}
+
+__global__ void sigmoid_kernel(float* result, const float* A, size_t size) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < size) {
+        result[idx] = 1.0f / (1.0f + expf(-A[idx]));
+    }
+}
+
+// A[i] is already the sigmoid output s, derivative is s*(1-s)
+__global__ void sigmoid_derivative_kernel(float* result, const float* A, size_t size) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < size) {
+        result[idx] = A[idx] * (1.0f - A[idx]);
+    }
+}
+
 
 namespace nn
 {
@@ -104,20 +134,24 @@ void CudaBackend::transpose(float*, const float*, size_t, size_t) {
     throw std::runtime_error("CudaBackend::transpose not implemented");
 }
 
-void CudaBackend::relu(float*, const float*, size_t) {
-    throw std::runtime_error("CudaBackend::relu not implemented");
+void CudaBackend::relu(float* result, const float* A, size_t size) {
+    relu_kernel<<<(size + 255) / 256, 256>>>(result, A, size);
+    CUDA_CHECK(cudaDeviceSynchronize());
 }
 
-void CudaBackend::relu_derivative(float*, const float*, size_t) {
-    throw std::runtime_error("CudaBackend::relu_derivative not implemented");
+void CudaBackend::relu_derivative(float* result, const float* A, size_t size) {
+    relu_derivative_kernel<<<(size + 255) / 256, 256>>>(result, A, size);
+    CUDA_CHECK(cudaDeviceSynchronize());
 }
 
-void CudaBackend::sigmoid(float*, const float*, size_t) {
-    throw std::runtime_error("CudaBackend::sigmoid not implemented");
+void CudaBackend::sigmoid(float* result, const float* A, size_t size) {
+    sigmoid_kernel<<<(size + 255) / 256, 256>>>(result, A, size);
+    CUDA_CHECK(cudaDeviceSynchronize());
 }
 
-void CudaBackend::sigmoid_derivative(float*, const float*, size_t) {
-    throw std::runtime_error("CudaBackend::sigmoid_derivative not implemented");
+void CudaBackend::sigmoid_derivative(float* result, const float* A, size_t size) {
+    sigmoid_derivative_kernel<<<(size + 255) / 256, 256>>>(result, A, size);
+    CUDA_CHECK(cudaDeviceSynchronize());
 }
 
 void CudaBackend::im2col(const float*, float*, int, int, int, int, int, int, int, int, int, int, int, int) {
