@@ -25,10 +25,10 @@ public:
     void transpose(float* result,
                   const float* A, size_t rows, size_t cols) override;
 
-    // element-wise
     void add(float* result,
             const float* A, const float* B, size_t size) override;
-
+ 
+    // element-wise
     void multiply(float* result,
                  const float* A, const float* B, size_t size) override;
 

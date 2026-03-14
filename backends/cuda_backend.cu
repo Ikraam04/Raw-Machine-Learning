@@ -62,10 +62,11 @@ void CudaBackend::copy(float* dst, const float* src, size_t size) {
     CUDA_CHECK(cudaMemcpy(dst, src, size * sizeof(float), cudaMemcpyDeviceToDevice));
 }
 
+// upload from host to device
 void CudaBackend::upload(float* dst, const float* src_host, size_t size) {
     CUDA_CHECK(cudaMemcpy(dst, src_host, size * sizeof(float), cudaMemcpyHostToDevice));
 }
-
+// download from device to host
 void CudaBackend::download(float* dst_host, const float* src, size_t size) {
     CUDA_CHECK(cudaMemcpy(dst_host, src, size * sizeof(float), cudaMemcpyDeviceToHost));
 }
@@ -74,7 +75,7 @@ void CudaBackend::fill(float* dst, float value, size_t size) {
     // launch kernel to fill the array
     // syntax: kernel<<<numBlocks, blockSize>>>(args...)
     fill_kernel<<<(size + 255) / 256, 256>>>(dst, value, size);
-    CUDA_CHECK(cudaDeviceSynchronize());
+    CUDA_CHECK(cudaDeviceSynchronize()); //synchronize to ensure kernel has finished before we return
 }
 
 
@@ -82,7 +83,7 @@ void CudaBackend::add(float* result, const float* A, const float* B, size_t size
     add_kernel<<<(size + 255) / 256, 256>>>(result, A, B, size);
     CUDA_CHECK(cudaDeviceSynchronize());
 }
-
+//element-wise multiplication
 void CudaBackend::multiply(float* result, const float* A, const float* B, size_t size) {
     multiply_kernel<<<(size + 255) / 256, 256>>>(result, A, B, size);
     CUDA_CHECK(cudaDeviceSynchronize());

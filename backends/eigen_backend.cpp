@@ -69,6 +69,7 @@ void EigenBackend::add(float* result,
     }
 }
 
+// element-wise multiplication
 void EigenBackend::multiply(float* result,
                             const float* A, const float* B, size_t size) {
     for (size_t i = 0; i < size; ++i) {
