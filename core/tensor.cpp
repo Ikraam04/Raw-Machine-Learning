@@ -10,13 +10,13 @@ Tensor::Tensor(const std::vector<size_t>& shape, BackendPtr backend)
     size_ = compute_size();
     data_ = backend_->allocate(size_);
 }
-
+// deep copy constructor: alloc new memory and copy data from other tensor using backend's copy method
 Tensor::Tensor(const Tensor& other)
     : shape_(other.shape_), size_(other.size_), backend_(other.backend_) {
     data_ = backend_->allocate(size_);
     backend_->copy(data_, other.data_, size_);
 }
-
+// move constructor: steal data pointer and backend, leave other in a safe empty state
 Tensor::Tensor(Tensor&& other) noexcept
     : shape_(std::move(other.shape_)),
       size_(other.size_),
@@ -70,11 +70,11 @@ void Tensor::fill(float value) {
 
 void Tensor::set_data(const float* src, size_t count) {
     if (count != size_) {
-        throw std::runtime_error("Data size mismatch: expected " + 
-                                std::to_string(size_) + " but got " + 
+        throw std::runtime_error("Data size mismatch: expected " +
+                                std::to_string(size_) + " but got " +
                                 std::to_string(count));
     }
-    backend_->copy(data_, src, count);
+    backend_->upload(data_, src, count);
 }
 
 void Tensor::set_data(const std::vector<float>& src) {
@@ -174,33 +174,29 @@ Tensor Tensor::sigmoid_derivative() const {
 }
 
 void Tensor::print(const char* name) const {
+    // download to cpu first so we can read it regardless of backend
+    std::vector<float> host(size_);
+    backend_->download(host.data(), data_, size_);
+
     std::cout << name << " (shape=[";
     for (size_t i = 0; i < shape_.size(); ++i) {
         std::cout << shape_[i];
         if (i < shape_.size() - 1) std::cout << ", ";
     }
     std::cout << "]):\n";
-    
+
     if (shape_.size() == 2) {
         for (size_t i = 0; i < rows(); ++i) {
             std::cout << "  ";
             for (size_t j = 0; j < cols(); ++j) {
-                std::cout << data_[i * cols() + j] << " ";
+                std::cout << host[i * cols() + j] << " ";
             }
             std::cout << "\n";
         }
-    } else if (shape_.size() == 1) {
-        std::cout << "  [";
-        for (size_t i = 0; i < std::min(size_, size_t(10)); ++i) {
-            std::cout << data_[i];
-            if (i < std::min(size_, size_t(10)) - 1) std::cout << ", ";
-        }
-        if (size_ > 10) std::cout << ", ...";
-        std::cout << "]\n";
     } else {
         std::cout << "  [";
         for (size_t i = 0; i < std::min(size_, size_t(10)); ++i) {
-            std::cout << data_[i];
+            std::cout << host[i];
             if (i < std::min(size_, size_t(10)) - 1) std::cout << ", ";
         }
         if (size_ > 10) std::cout << ", ...";

@@ -36,9 +36,16 @@ float* CudaBackend::allocate(size_t size) {
 void CudaBackend::deallocate(float* ptr) {
     CUDA_CHECK(cudaFree(ptr));
 }
-//device to device copy, used for intermediate results. For host-device transfers, we can add separate methods if needed.
 void CudaBackend::copy(float* dst, const float* src, size_t size) {
     CUDA_CHECK(cudaMemcpy(dst, src, size * sizeof(float), cudaMemcpyDeviceToDevice));
+}
+
+void CudaBackend::upload(float* dst, const float* src_host, size_t size) {
+    CUDA_CHECK(cudaMemcpy(dst, src_host, size * sizeof(float), cudaMemcpyHostToDevice));
+}
+
+void CudaBackend::download(float* dst_host, const float* src, size_t size) {
+    CUDA_CHECK(cudaMemcpy(dst_host, src, size * sizeof(float), cudaMemcpyDeviceToHost));
 }
 
 void CudaBackend::fill(float* dst, float value, size_t size) {

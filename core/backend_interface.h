@@ -19,6 +19,11 @@ public:
     // copy 'size' floats from src to dst, both ptrs must be from this backend
     virtual void copy(float* dst, const float* src, size_t size) = 0;
 
+    // transfer between cpu and backend memory
+    // for Eigen these are just copies; for CUDA these cross the host/device boundary
+    virtual void upload(float* dst, const float* src_host, size_t size) = 0;
+    virtual void download(float* dst_host, const float* src, size_t size) = 0;
+
     // fill array with a constant value
     virtual void fill(float* data, float value, size_t size) = 0;
 

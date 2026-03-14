@@ -19,6 +19,14 @@ void EigenBackend::copy(float* dst, const float* src, size_t size) {
     std::copy(src, src + size, dst);
 }
 
+void EigenBackend::upload(float* dst, const float* src_host, size_t size) {
+    std::copy(src_host, src_host + size, dst);
+}
+
+void EigenBackend::download(float* dst_host, const float* src, size_t size) {
+    std::copy(src, src + size, dst_host);
+}
+
 void EigenBackend::fill(float* data, float value, size_t size) {
     std::fill(data, data + size, value);
 }
@@ -103,11 +111,14 @@ void EigenBackend::sigmoid_derivative(float* result, const float* A, size_t size
 }
 
 // conv ops
-
+// im2col and col2im are used by the Conv2D layer to transform convolution into matrix multiplication
+// does this by unrolling each input patch into a row of the "col" matrix, so that the convolution
+// can be done as a single matmul with the kernel weights
 void EigenBackend::im2col(const float* input, float* col,
                           int batch, int in_channels, int height, int width,
                           int kernel_h, int kernel_w, int out_h, int out_w,
                           int pad_h, int pad_w, int stride_h, int stride_w) {
+    //most times they are square, but we allow rectangular kernels and strides for generality
     // col layout: (batch*out_h*out_w, in_channels*kernel_h*kernel_w)
     // each row is one output position's receptive field, flattened across channels
     int col_cols = in_channels * kernel_h * kernel_w;

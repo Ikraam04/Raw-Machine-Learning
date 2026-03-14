@@ -11,7 +11,9 @@ public:
     // memory
     float* allocate(size_t size) override;
     void deallocate(float* ptr) override;
-    void copy(float* dst, const float* src, size_t size) override; // device to device copy
+    void copy(float* dst, const float* src, size_t size) override;     // device to device
+    void upload(float* dst, const float* src_host, size_t size) override;   // cpu -> gpu
+    void download(float* dst_host, const float* src, size_t size) override; // gpu -> cpu
     void fill(float* data, float value, size_t size) override;
 
     // matrix ops
