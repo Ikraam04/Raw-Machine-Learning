@@ -124,15 +124,6 @@ void CudaBackend::scale(float* result, const float* A, float scalar, size_t size
     CUDA_CHECK(cudaDeviceSynchronize());
 }
 
-//stubs, not implemented yet.
-
-void CudaBackend::matmul(float*, const float*, size_t, size_t, const float*, size_t, size_t) {
-    throw std::runtime_error("CudaBackend::matmul not implemented");
-}
-
-void CudaBackend::transpose(float*, const float*, size_t, size_t) {
-    throw std::runtime_error("CudaBackend::transpose not implemented");
-}
 
 void CudaBackend::relu(float* result, const float* A, size_t size) {
     relu_kernel<<<(size + 255) / 256, 256>>>(result, A, size);
@@ -153,6 +144,17 @@ void CudaBackend::sigmoid_derivative(float* result, const float* A, size_t size)
     sigmoid_derivative_kernel<<<(size + 255) / 256, 256>>>(result, A, size);
     CUDA_CHECK(cudaDeviceSynchronize());
 }
+
+//stubs, not implemented yet.
+
+void CudaBackend::matmul(float*, const float*, size_t, size_t, const float*, size_t, size_t) {
+    throw std::runtime_error("CudaBackend::matmul not implemented");
+}
+
+void CudaBackend::transpose(float*, const float*, size_t, size_t) {
+    throw std::runtime_error("CudaBackend::transpose not implemented");
+}
+
 
 void CudaBackend::im2col(const float*, float*, int, int, int, int, int, int, int, int, int, int, int, int) {
     throw std::runtime_error("CudaBackend::im2col not implemented");
