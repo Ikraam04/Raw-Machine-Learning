@@ -75,6 +75,54 @@ __global__ void sigmoid_derivative_kernel(float* result, const float* A, size_t 
     }
 }
 
+// CUDA kernel for matrix multiplication: C = A * B
+// A: M x K
+// B: K x N
+// C: M x N
+//
+// Key difference vs CPU version:
+//
+// CPU version usually looks like:
+// for (i = 0..M)
+//   for (j = 0..N)
+//     for (k = 0..K)
+//       C[i,j] += A[i,k] * B[k,j]
+//
+// In CUDA we REMOVE the outer two loops (i and j).
+// Instead, the GPU launches many threads and each thread
+// is responsible for computing ONE element of C.
+//
+// So conceptually:
+// thread(row, col) -> compute C[row, col]
+//
+__global__ void matmul_kernel(float* result,
+                               const float* A, const float* B,
+                               int M, int K, int N)
+{
+    // Determine which output element this thread is responsible for.
+    // blockIdx + threadIdx together give the thread's global position
+    // in the 2D grid of threads.
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+
+    // Some launched threads may fall outside the matrix bounds
+    // (because we usually launch nice round block sizes).
+    // Those threads simply do nothing.
+    if (row < M && col < N) {
+
+        float sum = 0.0f;
+
+        // This is the ONLY loop left from the CPU version.
+        // Each thread walks across K to compute the dot product
+        // between row 'row' of A and column 'col' of B.
+        for (int k = 0; k < K; k++) {
+            sum += A[row * K + k] * B[k * N + col];
+        }
+
+        // Store the computed value into C[row, col].
+        result[row * N + col] = sum;
+    }
+}
 
 namespace nn
 {
@@ -147,8 +195,20 @@ void CudaBackend::sigmoid_derivative(float* result, const float* A, size_t size)
 
 //stubs, not implemented yet.
 
-void CudaBackend::matmul(float*, const float*, size_t, size_t, const float*, size_t, size_t) {
-    throw std::runtime_error("CudaBackend::matmul not implemented");
+void CudaBackend::matmul(float* result,
+                         const float* A, size_t A_rows, size_t A_cols,
+                         const float* B, size_t B_rows, size_t B_cols)
+{
+    int M = (int)A_rows;
+    int K = (int)A_cols;  // == B_rows
+    int N = (int)B_cols;
+
+    // 16x16 block = 256 threads, arranged in 2D to map onto the output matrix
+    dim3 threads(16, 16);
+    dim3 blocks((N + 15) / 16, (M + 15) / 16);
+
+    matmul_kernel<<<blocks, threads>>>(result, A, B, M, K, N);
+    CUDA_CHECK(cudaDeviceSynchronize());
 }
 
 void CudaBackend::transpose(float*, const float*, size_t, size_t) {
