@@ -124,6 +124,36 @@ __global__ void matmul_kernel(float* result,
     }
 }
 
+// cuda kernel for transpose: result = A^T
+// A is (rows x cols), result is (cols x rows)
+//
+// cpu version would look like:
+// for (i = 0..rows)
+//   for (j = 0..cols)
+//     result[j][i] = A[i][j]
+//
+// same deal as matmul - we kill both loops by assigning one thread per element.
+// thread(row, col) reads from A[row][col] and writes to result[col][row].
+// no loop needed at all - each thread does exactly one read and one write.
+//
+// conceptually:
+// thread(row, col) -> result[col][row] = A[row][col]
+//
+__global__ void transpose_kernel(float* result, const float* A, int rows, int cols)
+{
+    // figure out which element this thread owns, same 2d indexing as matmul
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+
+    // threads outside the matrix just chill and do nothing
+    if (row < rows && col < cols) {
+        // read from A[row][col] in row-major: index = row * cols + col
+        // write to result[col][row] in row-major: index = col * rows + row
+        // (result has shape cols x rows, so its "stride" is rows, not cols)
+        result[col * rows + row] = A[row * cols + col];
+    }
+}
+
 namespace nn
 {
 
@@ -193,8 +223,6 @@ void CudaBackend::sigmoid_derivative(float* result, const float* A, size_t size)
     CUDA_CHECK(cudaDeviceSynchronize());
 }
 
-//stubs, not implemented yet.
-
 void CudaBackend::matmul(float* result,
                          const float* A, size_t A_rows, size_t A_cols,
                          const float* B, size_t B_rows, size_t B_cols)
@@ -211,10 +239,15 @@ void CudaBackend::matmul(float* result,
     CUDA_CHECK(cudaDeviceSynchronize());
 }
 
-void CudaBackend::transpose(float*, const float*, size_t, size_t) {
-    throw std::runtime_error("CudaBackend::transpose not implemented");
+void CudaBackend::transpose(float* result, const float* A, size_t rows, size_t cols) {
+    // 2d block just like matmul - one thread per output element
+    dim3 threads(16, 16);
+    dim3 blocks((cols + 15) / 16, (rows + 15) / 16);
+    transpose_kernel<<<blocks, threads>>>(result, A, (int)rows, (int)cols);
+    CUDA_CHECK(cudaDeviceSynchronize());
 }
 
+//stubs, not implemented yet.
 
 void CudaBackend::im2col(const float*, float*, int, int, int, int, int, int, int, int, int, int, int, int) {
     throw std::runtime_error("CudaBackend::im2col not implemented");
