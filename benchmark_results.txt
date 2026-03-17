@@ -1,0 +1,28 @@
+NOTE: This CUDA implementation is NOT using cuBLAS.
+It also DOES NOT use memory tiling or any other advanced optimizations.
+It is a basic kernel implementation for comparison.
+
+64x64:
+  eigen: 0.624ms
+  cuda:  0.092ms
+  speedup: 6.816x
+
+256x256:
+  eigen: 34.681ms
+  cuda:  0.044ms
+  speedup: 784.979x
+
+512x512:
+  eigen: 271.035ms
+  cuda:  0.154ms
+  speedup: 1758.751x
+
+1024x1024:
+  eigen: 2168.813ms
+  cuda:  1.374ms
+  speedup: 1578.229x
+
+2048x2048:
+  eigen: 17810.433ms
+  cuda:  6.279ms
+  speedup: 2836.326x
