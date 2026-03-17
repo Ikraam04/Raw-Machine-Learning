@@ -1,0 +1,37 @@
+CUDA MATMUL BENCHMARK RESULTS
+============================
+
+NOTES:
+- This CUDA implementation is NOT using cuBLAS.
+- It does NOT use memory tiling or any other advanced optimizations.
+- It is a basic kernel implementation for comparison.
+
+COMPILER FLAGS USED:
+- Build Type: Release (-O3)
+- CXX Flags: -march=native
+
+RESULTS:
+64x64:
+  eigen: 0.005ms
+  cuda:  0.033ms
+  speedup: 0.160x
+
+256x256:
+  eigen: 0.245ms
+  cuda:  0.046ms
+  speedup: 5.360x
+
+512x512:
+  eigen: 1.806ms
+  cuda:  0.126ms
+  speedup: 14.324x
+
+1024x1024:
+  eigen: 19.371ms
+  cuda:  0.989ms
+  speedup: 19.589x
+
+2048x2048:
+  eigen: 152.782ms
+  cuda:  8.367ms
+  speedup: 18.261x
