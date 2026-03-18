@@ -19,7 +19,7 @@
 
 __global__ void fill_kernel(float* dst, float value, size_t size) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx < size) {
+    if (idx < size) {  
         dst[idx] = value;
     }
 }
@@ -158,8 +158,8 @@ __global__ void transpose_kernel(float* result, const float* A, int rows, int co
 // cuda kernel for im2col
 //
 // cpu version has 6 nested loops:
-// for b ... for oh ... for ow ...       <- outer 3: which output position
-//   for c ... for kh ... for kw ...     <- inner 3: fill one row of col matrix
+// for b ... for oh ... for ow ...  -> outer 3: which output position
+//   for c ... for kh ... for kw ...  -> inner 3: fill one row of col matrix
 //
 // we kill the outer 3 loops by assigning one thread per output position.
 // each thread is responsible for one (b, oh, ow) triple, and fills
@@ -181,7 +181,7 @@ __global__ void im2col_kernel(const float* input, float* col,
     int idx = blockIdx.x * blockDim.x + threadIdx.x; //1d because we flattened the outer 3 loops into one dimension of threads - easier to manage
     int total = batch * out_h * out_w;
 
-    // threads outside the output bounds do nothing
+    // outside the output bounds do nothing
     if (idx >= total) return;
 
     // unpack flat idx back into (b, oh, ow) - same as dividing back out place values
@@ -240,7 +240,7 @@ __global__ void col2im_kernel(const float* col, float* input,
     int idx = blockIdx.x * blockDim.x + threadIdx.x; //same 1d logic here
     int total = batch * out_h * out_w;
 
-    if (idx >= total) return;
+    if (idx >= total) return; 
 
     // unpack flat idx into (b, oh, ow) - same as im2col
     int b  = idx / (out_h * out_w);
@@ -344,7 +344,7 @@ void CudaBackend::matmul(float* result,
                          const float* B, size_t B_rows, size_t B_cols)
 {
     int M = (int)A_rows;
-    int K = (int)A_cols;  // == B_rows
+    int K = (int)A_cols; 
     int N = (int)B_cols;
 
     // 16x16 block = 256 threads, arranged in 2D to map onto the output matrix
@@ -364,11 +364,13 @@ void CudaBackend::transpose(float* result, const float* A, size_t rows, size_t c
 }
 
 
+// im2col and col2im can use 1d blocks since we use a flat indexing scheme in the kernel
 
 void CudaBackend::im2col(const float* input, float* col,
                          int batch, int in_channels, int height, int width,
                          int kernel_h, int kernel_w, int out_h, int out_w,
                          int pad_h, int pad_w, int stride_h, int stride_w) {
+
     int total = batch * out_h * out_w;
     im2col_kernel<<<(total + 255) / 256, 256>>>(
         input, col,
@@ -379,10 +381,13 @@ void CudaBackend::im2col(const float* input, float* col,
     CUDA_CHECK(cudaDeviceSynchronize());
 }
 
+
+
 void CudaBackend::col2im(const float* col, float* input,
                          int batch, int in_channels, int height, int width,
                          int kernel_h, int kernel_w, int out_h, int out_w,
                          int pad_h, int pad_w, int stride_h, int stride_w) {
+
     int total = batch * out_h * out_w;
     col2im_kernel<<<(total + 255) / 256, 256>>>(
         col, input,
