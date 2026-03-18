@@ -119,7 +119,8 @@ __global__ void matmul_kernel(float* result,
             sum += A[row * K + k] * B[k * N + col];
         }
 
-        // Store the computed value into C[row, col].
+        // Store the computed value into C[row, col]
+        // dont assign in the for loop, avoids redundant global memory reads/writes
         result[row * N + col] = sum;
     }
 }
@@ -151,6 +152,121 @@ __global__ void transpose_kernel(float* result, const float* A, int rows, int co
         // write to result[col][row] in row-major: index = col * rows + row
         // (result has shape cols x rows, so its "stride" is rows, not cols)
         result[col * rows + row] = A[row * cols + col];
+    }
+}
+
+// cuda kernel for im2col
+//
+// cpu version has 6 nested loops:
+// for b ... for oh ... for ow ...       <- outer 3: which output position
+//   for c ... for kh ... for kw ...     <- inner 3: fill one row of col matrix
+//
+// we kill the outer 3 loops by assigning one thread per output position.
+// each thread is responsible for one (b, oh, ow) triple, and fills
+// the entire corresponding row of the col matrix itself (inner 3 stay as loops).
+//
+// col matrix layout:
+//   rows: batch * out_h * out_w   (one row per output position)
+//   cols: in_channels * kernel_h * kernel_w  (one col per input value in the receptive field)
+//
+// conceptually:
+// thread(idx) -> owns row idx = (b, oh, ow), fills all kernel_h*kernel_w*in_channels cols
+//
+__global__ void im2col_kernel(const float* input, float* col,
+                               int batch, int in_channels, int height, int width,
+                               int kernel_h, int kernel_w, int out_h, int out_w,
+                               int pad_h, int pad_w, int stride_h, int stride_w)
+{
+    // flat thread index - each thread owns one output position (b, oh, ow)
+    int idx = blockIdx.x * blockDim.x + threadIdx.x; //1d because we flattened the outer 3 loops into one dimension of threads - easier to manage
+    int total = batch * out_h * out_w;
+
+    // threads outside the output bounds do nothing
+    if (idx >= total) return;
+
+    // unpack flat idx back into (b, oh, ow) - same as dividing back out place values
+    int b  = idx / (out_h * out_w);
+    int oh = (idx / out_w) % out_h;
+    int ow = idx % out_w;
+
+    // how many columns does one row of col have?
+    int col_cols = in_channels * kernel_h * kernel_w;
+
+    // this thread fills every column of its row - one value per (c, kh, kw) combo
+    for (int c = 0; c < in_channels; ++c) {
+        for (int kh = 0; kh < kernel_h; ++kh) {
+            for (int kw = 0; kw < kernel_w; ++kw) {
+
+                // which column of col does this (c, kh, kw) map to?
+                int col_col = c * kernel_h * kernel_w + kh * kernel_w + kw;
+
+                // which input pixel does this kernel position land on?
+                // stride moves the receptive field, padding shifts it inward
+                int ih = oh * stride_h + kh - pad_h;
+                int iw = ow * stride_w + kw - pad_w;
+
+                // if we're outside the input (padding region), write 0
+                float val = 0.0f;
+                if (ih >= 0 && ih < height && iw >= 0 && iw < width) {
+                    val = input[b * in_channels * height * width
+                                + c * height * width
+                                + ih * width + iw];
+                }
+
+                col[idx * col_cols + col_col] = val;
+            }
+        }
+    }
+}
+
+// cuda kernel for col2im: reverse of im2col, scatters col values back into input
+//
+// cpu version just does:
+// for b, oh, ow, c, kh, kw:
+//   input[b][c][ih][iw] += col[row][col_col]
+//
+// same 1d pattern as im2col - one thread per output position (b, oh, ow).
+// each thread reads its row of col and scatters values back to input.
+// NOTE: because multiple threads can write to the same input pixel (when receptive fields overlap),
+// we have to use atomicAdd to avoid race conditions.
+//
+// input must be zeroed before calling - this kernel only adds into it
+//
+__global__ void col2im_kernel(const float* col, float* input,
+                               int batch, int in_channels, int height, int width,
+                               int kernel_h, int kernel_w, int out_h, int out_w,
+                               int pad_h, int pad_w, int stride_h, int stride_w)
+{
+    int idx = blockIdx.x * blockDim.x + threadIdx.x; //same 1d logic here
+    int total = batch * out_h * out_w;
+
+    if (idx >= total) return;
+
+    // unpack flat idx into (b, oh, ow) - same as im2col
+    int b  = idx / (out_h * out_w);
+    int oh = (idx / out_w) % out_h;
+    int ow = idx % out_w;
+
+    int col_cols = in_channels * kernel_h * kernel_w;
+
+    for (int c = 0; c < in_channels; ++c) {
+        for (int kh = 0; kh < kernel_h; ++kh) {
+            for (int kw = 0; kw < kernel_w; ++kw) {
+
+                int col_col = c * kernel_h * kernel_w + kh * kernel_w + kw;
+
+                int ih = oh * stride_h + kh - pad_h;
+                int iw = ow * stride_w + kw - pad_w;
+
+                if (ih >= 0 && ih < height && iw >= 0 && iw < width) {
+                    float val = col[idx * col_cols + col_col];
+                    // atomicAdd because multiple threads can map to the same input pixel
+                    atomicAdd(&input[b * in_channels * height * width
+                                     + c * height * width
+                                     + ih * width + iw], val);
+                }
+            }
+        }
     }
 }
 
@@ -247,14 +363,34 @@ void CudaBackend::transpose(float* result, const float* A, size_t rows, size_t c
     CUDA_CHECK(cudaDeviceSynchronize());
 }
 
-//stubs, not implemented yet.
 
-void CudaBackend::im2col(const float*, float*, int, int, int, int, int, int, int, int, int, int, int, int) {
-    throw std::runtime_error("CudaBackend::im2col not implemented");
+
+void CudaBackend::im2col(const float* input, float* col,
+                         int batch, int in_channels, int height, int width,
+                         int kernel_h, int kernel_w, int out_h, int out_w,
+                         int pad_h, int pad_w, int stride_h, int stride_w) {
+    int total = batch * out_h * out_w;
+    im2col_kernel<<<(total + 255) / 256, 256>>>(
+        input, col,
+        batch, in_channels, height, width,
+        kernel_h, kernel_w, out_h, out_w,
+        pad_h, pad_w, stride_h, stride_w
+    );
+    CUDA_CHECK(cudaDeviceSynchronize());
 }
 
-void CudaBackend::col2im(const float*, float*, int, int, int, int, int, int, int, int, int, int, int, int) {
-    throw std::runtime_error("CudaBackend::col2im not implemented");
+void CudaBackend::col2im(const float* col, float* input,
+                         int batch, int in_channels, int height, int width,
+                         int kernel_h, int kernel_w, int out_h, int out_w,
+                         int pad_h, int pad_w, int stride_h, int stride_w) {
+    int total = batch * out_h * out_w;
+    col2im_kernel<<<(total + 255) / 256, 256>>>(
+        col, input,
+        batch, in_channels, height, width,
+        kernel_h, kernel_w, out_h, out_w,
+        pad_h, pad_w, stride_h, stride_w
+    );
+    CUDA_CHECK(cudaDeviceSynchronize());
 }
 
 } // namespace nn
