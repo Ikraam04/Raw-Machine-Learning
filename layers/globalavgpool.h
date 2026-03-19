@@ -33,26 +33,13 @@ public:
 
         Tensor output({(size_t)batch, (size_t)channels}, backend_);
 
-        float inv_hw = 1.0f / (float)(h * w);
-        const float* in = input.data();
-        float*      out = output.data();
-
-        for (int n = 0; n < batch; ++n) {
-            for (int c = 0; c < channels; ++c) {
-                float sum = 0.0f;
-                const float* fm = in + n * channels * h * w + c * h * w;
-                for (int i = 0; i < h * w; ++i) {
-                    sum += fm[i];
-                }
-                out[n * channels + c] = sum * inv_hw;
-            }
-        }
+        backend_->global_avg_pool_forward(input.data(), output.data(),
+                                           batch, channels, h, w);
 
         return output;
     }
 
     Tensor backward(const Tensor& grad_output) override {
-        // grad_output: {batch, channels}
         int batch    = (int)grad_output.shape()[0];
         int channels = cached_channels_;
         int h        = cached_h_;
@@ -61,19 +48,8 @@ public:
         Tensor grad_input({(size_t)batch, (size_t)channels,
                            (size_t)h,     (size_t)w}, backend_);
 
-        float inv_hw = 1.0f / (float)(h * w);
-        const float* grad_out = grad_output.data();
-        float*       grad_in  = grad_input.data();
-
-        for (int n = 0; n < batch; ++n) {
-            for (int c = 0; c < channels; ++c) {
-                float g = grad_out[n * channels + c] * inv_hw;
-                float* fm = grad_in + n * channels * h * w + c * h * w;
-                for (int i = 0; i < h * w; ++i) {
-                    fm[i] = g;
-                }
-            }
-        }
+        backend_->global_avg_pool_backward(grad_output.data(), grad_input.data(),
+                                            batch, channels, h, w);
 
         return grad_input;
     }

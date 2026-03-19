@@ -7,55 +7,53 @@ namespace nn {
 float mse_loss(const Tensor& predictions,
                const std::vector<float>& targets,
                size_t batch_size,
-               size_t output_dim) 
+               size_t output_dim)
                {
+    size_t total = batch_size * output_dim;
+    std::vector<float> preds(total);
+    predictions.backend()->download(preds.data(), predictions.data(), total);
+
     float total_loss = 0.0f;
-    
-    for (size_t b = 0; b < batch_size; ++b) {
-        for (size_t c = 0; c < output_dim; ++c) {
-            size_t idx = b * output_dim + c;
-            float pred = predictions.data()[idx];
-            float target = targets[idx];
-            total_loss += (pred - target) * (pred - target);  // (pred - target)^2
-        }
+    for (size_t i = 0; i < total; ++i) {
+        float diff = preds[i] - targets[i];
+        total_loss += diff * diff;
     }
 
-    return total_loss / (batch_size * output_dim);  // average over batch and dims
+    return total_loss / total;
 }
 
 void mse_gradient(const Tensor& predictions,
                   const std::vector<float>& targets,
                   Tensor& grad_output,
                   size_t batch_size,
-                  size_t output_dim) 
+                  size_t output_dim)
                   {
-    for (size_t b = 0; b < batch_size; ++b) {
-        for (size_t c = 0; c < output_dim; ++c) {
-            size_t idx = b * output_dim + c;
-            float pred = predictions.data()[idx];
-            float target = targets[idx];
-            grad_output.data()[idx] = 2.0f * (pred - target) / (batch_size * output_dim);
-        }
+    size_t total = batch_size * output_dim;
+    std::vector<float> preds(total);
+    predictions.backend()->download(preds.data(), predictions.data(), total);
+
+    std::vector<float> grad(total);
+    for (size_t i = 0; i < total; ++i) {
+        grad[i] = 2.0f * (preds[i] - targets[i]) / total;
     }
+
+    grad_output.set_data(grad);
 }
 
 float cross_entropy_loss(const Tensor& predictions,
                         const std::vector<float>& targets,
                         size_t batch_size,
                         size_t num_classes) {
-    const float epsilon = 1e-7f;  // clamp to avoid log(0)
+    const float epsilon = 1e-7f;
+    size_t total = batch_size * num_classes;
+    std::vector<float> preds(total);
+    predictions.backend()->download(preds.data(), predictions.data(), total);
+
     float total_loss = 0.0f;
-
-    for (size_t b = 0; b < batch_size; ++b) {
-        for (size_t c = 0; c < num_classes; ++c) {
-            size_t idx = b * num_classes + c;
-            float pred = predictions.data()[idx];
-            float target = targets[idx];
-
-            if (target > 0.5f) {  // only the true class contributes to loss
-                pred = std::max(epsilon, std::min(1.0f - epsilon, pred));
-                total_loss += -std::log(pred);
-            }
+    for (size_t i = 0; i < total; ++i) {
+        if (targets[i] > 0.5f) {
+            float pred = std::max(epsilon, std::min(1.0f - epsilon, preds[i]));
+            total_loss += -std::log(pred);
         }
     }
 
@@ -67,15 +65,16 @@ void cross_entropy_gradient(const Tensor& predictions,
                            Tensor& grad_output,
                            size_t batch_size,
                            size_t num_classes) {
-    // grad = (prediction - target) / batch_size
-    for (size_t b = 0; b < batch_size; ++b) {
-        for (size_t c = 0; c < num_classes; ++c) {
-            size_t idx = b * num_classes + c;
-            float pred = predictions.data()[idx];
-            float target = targets[idx];
-            grad_output.data()[idx] = (pred - target) / batch_size;
-        }
+    size_t total = batch_size * num_classes;
+    std::vector<float> preds(total);
+    predictions.backend()->download(preds.data(), predictions.data(), total);
+
+    std::vector<float> grad(total);
+    for (size_t i = 0; i < total; ++i) {
+        grad[i] = (preds[i] - targets[i]) / batch_size;
     }
+
+    grad_output.set_data(grad);
 }
 
 float softmax_cross_entropy_loss_and_gradient(const Tensor& logits,
@@ -83,12 +82,16 @@ float softmax_cross_entropy_loss_and_gradient(const Tensor& logits,
                                               Tensor& grad_output,
                                               size_t batch_size,
                                               size_t num_classes) {
+    size_t total = batch_size * num_classes;
+    std::vector<float> logit_host(total);
+    logits.backend()->download(logit_host.data(), logits.data(), total);
+
     const float epsilon = 1e-7f;
     float total_loss = 0.0f;
+    std::vector<float> grad(total);
 
     for (size_t b = 0; b < batch_size; ++b) {
-        const float* logit_row = logits.data() + b * num_classes;
-        float* grad_row = grad_output.data() + b * num_classes;
+        const float* logit_row = logit_host.data() + b * num_classes;
 
         // softmax with stability trick (subtract max before exp)
         float max_logit = logit_row[0];
@@ -99,7 +102,7 @@ float softmax_cross_entropy_loss_and_gradient(const Tensor& logits,
         }
 
         float sum_exp = 0.0f;
-        float softmax[10];  // hardcoded to 10 for MNIST - would need dynamic alloc for other sizes
+        std::vector<float> softmax(num_classes);
         for (size_t c = 0; c < num_classes; ++c) {
             softmax[c] = std::exp(logit_row[c] - max_logit);
             sum_exp += softmax[c];
@@ -114,7 +117,7 @@ float softmax_cross_entropy_loss_and_gradient(const Tensor& logits,
             size_t idx = b * num_classes + c;
             float target = targets[idx];
 
-            if (target > 0.5f) {  // only the true class contributes
+            if (target > 0.5f) {
                 float pred = std::max(epsilon, std::min(1.0f - epsilon, softmax[c]));
                 total_loss += -std::log(pred);
             }
@@ -123,10 +126,11 @@ float softmax_cross_entropy_loss_and_gradient(const Tensor& logits,
         // gradient = (softmax - target) / batch_size
         for (size_t c = 0; c < num_classes; ++c) {
             size_t idx = b * num_classes + c;
-            grad_row[c] = (softmax[c] - targets[idx]) / batch_size;
+            grad[idx] = (softmax[c] - targets[idx]) / batch_size;
         }
     }
-    
+
+    grad_output.set_data(grad);
     return total_loss / batch_size;
 }
 

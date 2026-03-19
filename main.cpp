@@ -1,290 +1,198 @@
+#include <iostream>
+#include <string>
+#include <vector>
+#include <numeric>
+#include <algorithm>
+#include <random>
+#include <chrono>
+#include <memory>
+
+#include "core/tensor.h"
+#include "backends/eigen_backend.h"
+#include "backends/cuda_backend.h"
 #include "layers/sequential.h"
 #include "layers/conv2d.h"
 #include "layers/maxpool2d.h"
-#include "layers/globalavgpool.h"
+#include "layers/flatten.h"
 #include "layers/dense.h"
 #include "layers/activation.h"
-#include "backends/eigen_backend.h"
-#include "data/mnist_loader.h"
 #include "loss/loss.h"
-#include <iostream>
-#include <iomanip>
-#include <random>
-#include <algorithm>
-#include <chrono>
-#include <string>
+#include "data/mnist_loader.h"
 
-using namespace nn;
-using BackendPtr = std::shared_ptr<Backend>;
-
-// ── helpers ───────────────────────────────────────────────────────────────────
-
-static std::string sep(char c = '-', int n = 60) { return std::string(n, c); }
-
-// simple text progress bar:  [=====>    ] 450/1875
-static void print_progress(size_t done, size_t total, float loss) {
-    const int bar_width = 30;
-    float pct = (float)done / total;
-    int filled = (int)(pct * bar_width);
-
-    std::cout << "\r  [";
-    for (int i = 0; i < bar_width; ++i)
-        std::cout << (i < filled ? '=' : (i == filled ? '>' : ' '));
-    std::cout << "] "
-              << std::setw(4) << done << "/" << total
-              << "  loss: " << std::fixed << std::setprecision(4) << loss
-              << "  " << std::flush;
-}
-
-// evaluate accuracy on up to max_samples examples using batched forward passes
-// input tensors are 4D: {batch, 1, 28, 28}
-static float evaluate_accuracy(Sequential& network,
-                                const MNISTDataset& dataset,
-                                BackendPtr backend,
-                                size_t max_samples = 10000,
-                                size_t batch_size  = 100) {
-    size_t correct     = 0;
-    size_t num_samples = std::min(max_samples, dataset.size());
-
-    for (size_t i = 0; i < num_samples; i += batch_size) {
-        size_t cur = std::min(batch_size, num_samples - i);
-
-        Tensor batch_input({cur, 1, 28, 28}, backend);
-        for (size_t b = 0; b < cur; ++b) {
-            for (size_t j = 0; j < 784; ++j) {
-                batch_input.data()[b * 784 + j] = dataset.images[i + b][j];
-            }
-        }
-
-        Tensor output = network.forward(batch_input);
-
-        for (size_t b = 0; b < cur; ++b) {
-            std::vector<float> out_vec(10);
-            for (size_t j = 0; j < 10; ++j) {
-                out_vec[j] = output.data()[b * 10 + j];
-            }
-            if (predict_class(out_vec) == dataset.labels[i + b]) ++correct;
-        }
-    }
-
-    return 100.0f * correct / num_samples;
-}
-
-// ── main ──────────────────────────────────────────────────────────────────────
+// MNIST CNN architecture:
+//   Conv2D(1→16, 3x3, pad=1) → ReLU → MaxPool(2)    → 14x14
+//   Conv2D(16→32, 3x3, pad=1) → ReLU → MaxPool(2)   → 7x7
+//   Flatten → Dense(32*7*7→128) → ReLU → Dense(128→10)
+//   Softmax cross-entropy loss (fused)
 
 int main() {
-    std::cout << "\n" << sep('=') << "\n";
-    std::cout << "  MNIST digit classification — CNN\n";
-    std::cout << sep('=') << "\n\n";
+    // auto backend = std::make_shared<nn::EigenBackend>();
+    auto backend = std::make_shared<nn::CudaBackend>();
+    std::cout << "Backend: CUDA (GPU)\n";
 
-    try {
-        // ── data loading ──────────────────────────────────────────────────────
-        std::cout << "Loading data...\n";
+    // --- hyperparameters ---
+    const size_t batch_size   = 64;
+    const size_t num_epochs   = 10;
+    const float  learning_rate = 0.001f;
+    const size_t num_classes  = 10;
 
-        auto t0 = std::chrono::high_resolution_clock::now();
-        auto train_data = load_mnist("../MNIST_Data/train-images.idx3-ubyte",
-                                     "../MNIST_Data/train-labels.idx1-ubyte",
-                                     true);
-        auto test_data  = load_mnist("../MNIST_Data/t10k-images.idx3-ubyte",
-                                     "../MNIST_Data/t10k-labels.idx1-ubyte",
-                                     true);
-        auto t1 = std::chrono::high_resolution_clock::now();
-        double load_s = std::chrono::duration<double>(t1 - t0).count();
+    // --- load MNIST ---
+    std::string data_dir = "../MNIST_Data/";
+    nn::MNISTDataset train_data = nn::load_mnist(
+        data_dir + "train-images.idx3-ubyte",
+        data_dir + "train-labels.idx1-ubyte");
+    nn::MNISTDataset test_data = nn::load_mnist(
+        data_dir + "t10k-images.idx3-ubyte",
+        data_dir + "t10k-labels.idx1-ubyte");
 
-        std::cout << "  train : " << train_data.size() << " images\n";
-        std::cout << "  test  : " << test_data.size()  << " images\n";
-        std::cout << "  format: 28x28, 1 channel, normalised [0,1]\n";
-        std::cout << "  loaded in " << std::fixed << std::setprecision(2)
-                  << load_s << "s\n\n";
+    std::cout << "Train samples: " << train_data.size() << "\n";
+    std::cout << "Test samples:  " << test_data.size() << "\n\n";
 
-        // ── network ───────────────────────────────────────────────────────────
-        auto backend = std::make_shared<EigenBackend>();
+    // --- build network ---
+    nn::Sequential net;
 
-        // architecture constants — keep them in one place so the Dense sizes
-        // below stay correct if you change the conv/pool params
-        const int  C1 = 32, C2 = 64;   // filter counts
-        const int  H0 = 28, W0 = 28;   // input spatial size
-        const int  H2 = H0/2, W2 = W0/2;  // after pool1 (conv1 keeps size with pad=1)
-        const int  H4 = H2/2, W4 = W2/2;  // after pool2
+    // conv block 1: 1×28×28 → 16×14×14
+    net.add(std::make_shared<nn::Conv2D>(1, 16, 3, 3, 1, 1, 1, 1, backend));
+    net.add(std::make_shared<nn::ReLU>(backend));
+    net.add(std::make_shared<nn::MaxPool2D>(2, backend));
 
-        Sequential network;
+    // conv block 2: 16×14×14 → 32×7×7
+    net.add(std::make_shared<nn::Conv2D>(16, 32, 3, 3, 1, 1, 1, 1, backend));
+    net.add(std::make_shared<nn::ReLU>(backend));
+    net.add(std::make_shared<nn::MaxPool2D>(2, backend));
 
-        // block 1
-        network.add(std::make_shared<Conv2D>(1,  C1, 3, 3, 1, 1, 1, 1, backend));
-        network.add(std::make_shared<ReLU>(backend));
-        network.add(std::make_shared<MaxPool2D>(2, backend));
+    // classifier: 32*7*7 → 128 → 10
+    net.add(std::make_shared<nn::Flatten>(backend));
+    net.add(std::make_shared<nn::Dense>(32 * 7 * 7, 128, backend));
+    net.add(std::make_shared<nn::ReLU>(backend));
+    net.add(std::make_shared<nn::Dense>(128, num_classes, backend));
 
-        // block 2
-        network.add(std::make_shared<Conv2D>(C1, C2, 3, 3, 1, 1, 1, 1, backend));
-        network.add(std::make_shared<ReLU>(backend));
-        network.add(std::make_shared<MaxPool2D>(2, backend));
+    std::cout << "Network: Conv(1→16) → ReLU → Pool → Conv(16→32) → ReLU → Pool → "
+              << "Flatten → Dense(1568→128) → ReLU → Dense(128→10)\n\n";
 
-        // global average pool: {batch,64,7,7} -> {batch,64}  (no Flatten needed)
-        network.add(std::make_shared<GlobalAvgPool>(backend));
+    // --- training loop ---
+    size_t num_train = train_data.size();
+    size_t num_batches = num_train / batch_size;
 
-        // classifier: just one dense layer directly from C2 features to 10 classes
-        network.add(std::make_shared<Dense>(C2, 10, backend));
-        network.add(std::make_shared<Softmax>(backend));
+    // shuffle indices
+    std::vector<size_t> indices(num_train);
+    std::iota(indices.begin(), indices.end(), 0);
+    std::mt19937 rng(42);
 
-        // parameter counts
-        size_t p_conv1 = (size_t)(1  * C1 * 3 * 3 + C1);
-        size_t p_conv2 = (size_t)(C1 * C2 * 3 * 3 + C2);
-        size_t p_dense = (size_t)(C2 * 10 + 10);
-        size_t p_total = p_conv1 + p_conv2 + p_dense;
+    for (size_t epoch = 0; epoch < num_epochs; ++epoch) {
+        auto epoch_start = std::chrono::steady_clock::now();
 
-        std::cout << "Architecture:\n";
-        std::cout << "  input              1  x 28 x 28\n";
-        std::cout << "  Conv2D (3x3 p=1)   " << std::setw(2) << 1
-                  << " -> " << std::setw(2) << C1
-                  << "   output: " << C1 << " x " << H0 << " x " << W0
-                  << "   params: " << p_conv1 << "\n";
-        std::cout << "  ReLU\n";
-        std::cout << "  MaxPool2D (2x2)         output: "
-                  << C1 << " x " << H2 << " x " << W2 << "\n";
-        std::cout << "  Conv2D (3x3 p=1)   " << std::setw(2) << C1
-                  << " -> " << std::setw(2) << C2
-                  << "   output: " << C2 << " x " << H2 << " x " << W2
-                  << "   params: " << p_conv2 << "\n";
-        std::cout << "  ReLU\n";
-        std::cout << "  MaxPool2D (2x2)         output: "
-                  << C2 << " x " << H4 << " x " << W4 << "\n";
-        std::cout << "  GlobalAvgPool           output: " << C2 << "\n";
-        std::cout << "  Dense              " << std::setw(4) << C2
-                  << " -> 10      params: " << p_dense << "\n";
-        std::cout << "  Softmax\n";
-        std::cout << "  " << sep() << "\n";
-        std::cout << "  total trainable params: " << p_total << "\n\n";
+        std::shuffle(indices.begin(), indices.end(), rng);
 
-        // ── hyperparameters ───────────────────────────────────────────────────
-        const int    epochs      = 5;        // Adam + GAP converges fast
-        const float  lr          = 0.001f;  // Adam default
-        const size_t batch_size  = 32;
-        const size_t n_train     = train_data.size();
-        const size_t num_batches = (n_train + batch_size - 1) / batch_size;
+        float epoch_loss = 0.0f;
+        size_t epoch_correct = 0;
 
-        std::cout << "Hyperparameters:\n";
-        std::cout << "  optimiser   : Adam (beta1=0.9, beta2=0.999, eps=1e-8)\n";
-        std::cout << "  epochs      : " << epochs     << "\n";
-        std::cout << "  batch size  : " << batch_size  << "\n";
-        std::cout << "  learning rate: " << lr          << "\n";
-        std::cout << "  batches/epoch: " << num_batches << "\n\n";
+        for (size_t b = 0; b < num_batches; ++b) {
+            // --- assemble batch ---
+            // images as NCHW: {batch_size, 1, 28, 28}
+            std::vector<float> batch_images(batch_size * 1 * 28 * 28);
+            std::vector<float> batch_targets(batch_size * num_classes, 0.0f);
 
-        // ── training ──────────────────────────────────────────────────────────
-        std::cout << sep('=') << "\n";
-        std::cout << "  Training\n";
-        std::cout << sep('=') << "\n\n";
+            for (size_t i = 0; i < batch_size; ++i) {
+                size_t idx = indices[b * batch_size + i];
+                // copy image (already flattened 784 floats, treat as 1×28×28)
+                std::copy(train_data.images[idx].begin(),
+                          train_data.images[idx].end(),
+                          batch_images.begin() + i * 784);
+                // one-hot target
+                batch_targets[i * num_classes + train_data.labels[idx]] = 1.0f;
+            }
 
-        std::vector<size_t> indices(n_train);
-        std::iota(indices.begin(), indices.end(), 0);
-        std::random_device rd;
-        std::mt19937 gen(rd());
+            nn::Tensor input({batch_size, 1, 28, 28}, backend);
+            input.set_data(batch_images);
 
-        float best_test_acc = 0.0f;
+            // --- forward ---
+            nn::Tensor logits = net.forward(input);
 
-        for (int epoch = 0; epoch < epochs; ++epoch) {
-            auto ep_start = std::chrono::high_resolution_clock::now();
+            // --- loss + gradient (fused softmax cross-entropy) ---
+            nn::Tensor grad({batch_size, num_classes}, backend);
+            float loss = nn::softmax_cross_entropy_loss_and_gradient(
+                logits, batch_targets, grad, batch_size, num_classes);
 
-            std::cout << "Epoch " << (epoch + 1) << "/" << epochs << "\n";
+            epoch_loss += loss;
 
-            std::shuffle(indices.begin(), indices.end(), gen);
+            // --- accuracy (on this batch) ---
+            std::vector<float> logits_host(batch_size * num_classes);
+            backend->download(logits_host.data(), logits.data(),
+                              batch_size * num_classes);
 
-            float epoch_loss   = 0.0f;
-            size_t n_processed = 0;
-
-            for (size_t bi = 0; bi < num_batches; ++bi) {
-                size_t bs  = std::min(batch_size, n_train - bi * batch_size);
-
-                // build 4D batch: {bs, 1, 28, 28}
-                Tensor batch_input({bs, 1, 28, 28}, backend);
-                std::vector<float> targets(bs * 10);
-
-                for (size_t b = 0; b < bs; ++b) {
-                    size_t idx = indices[bi * batch_size + b];
-                    for (size_t j = 0; j < 784; ++j) {
-                        batch_input.data()[b * 784 + j] = train_data.images[idx][j];
-                    }
-                    auto onehot = label_to_onehot(train_data.labels[idx], 10);
-                    for (size_t j = 0; j < 10; ++j) {
-                        targets[b * 10 + j] = onehot[j];
-                    }
-                }
-
-                // forward
-                Tensor output = network.forward(batch_input);
-
-                // loss + gradient
-                Tensor grad({bs, 10}, backend);
-                float  loss = cross_entropy_loss(output, targets, bs, 10);
-                cross_entropy_gradient(output, targets, grad, bs, 10);
-
-                epoch_loss  += loss * (float)bs;
-                n_processed += bs;
-
-                // backward + update
-                network.backward(grad);
-                network.update_parameters(lr);
-
-                // progress bar every 50 batches or at the end
-                if ((bi + 1) % 50 == 0 || bi == num_batches - 1) {
-                    print_progress(bi + 1, num_batches, epoch_loss / n_processed);
+            for (size_t i = 0; i < batch_size; ++i) {
+                uint8_t pred = nn::predict_class(
+                    std::vector<float>(logits_host.begin() + i * num_classes,
+                                       logits_host.begin() + (i + 1) * num_classes));
+                size_t idx = indices[b * batch_size + i];
+                if (pred == train_data.labels[idx]) {
+                    ++epoch_correct;
                 }
             }
-            std::cout << "\n";  // end progress bar line
 
-            auto ep_end = std::chrono::high_resolution_clock::now();
-            double ep_s = std::chrono::duration<double>(ep_end - ep_start).count();
+            // --- backward + update ---
+            net.backward(grad);
+            net.update_parameters(learning_rate);
 
-            float avg_loss  = epoch_loss / n_processed;
-            float train_acc = evaluate_accuracy(network, train_data, backend, 10000, 100);
-            float test_acc  = evaluate_accuracy(network, test_data,  backend, 10000, 100);
-            best_test_acc   = std::max(best_test_acc, test_acc);
-
-            std::cout << "  avg loss : " << std::fixed << std::setprecision(4) << avg_loss  << "\n";
-            std::cout << "  train acc: " << std::fixed << std::setprecision(2) << train_acc << "%\n";
-            std::cout << "  test  acc: " << std::fixed << std::setprecision(2) << test_acc  << "%";
-            if (test_acc == best_test_acc) std::cout << "  <-- best";
-            std::cout << "\n";
-            std::cout << "  time     : " << std::fixed << std::setprecision(1) << ep_s << "s\n\n";
+            if ((b + 1) % 100 == 0) {
+                std::cout << "  epoch " << (epoch + 1) << " batch " << (b + 1)
+                          << "/" << num_batches
+                          << "  loss=" << (epoch_loss / (b + 1)) << "\n";
+            }
         }
 
-        // ── final metrics ─────────────────────────────────────────────────────
-        std::cout << sep('=') << "\n";
-        std::cout << "  Results\n";
-        std::cout << sep('=') << "\n\n";
+        auto epoch_end = std::chrono::steady_clock::now();
+        double epoch_sec = std::chrono::duration<double>(epoch_end - epoch_start).count();
 
-        float final_acc = evaluate_accuracy(network, test_data, backend, 10000, 100);
-        std::cout << "  final test accuracy : " << std::fixed << std::setprecision(2)
-                  << final_acc << "%\n";
-        std::cout << "  best  test accuracy : " << std::fixed << std::setprecision(2)
-                  << best_test_acc << "%\n\n";
+        float avg_loss = epoch_loss / num_batches;
+        float train_acc = 100.0f * epoch_correct / (num_batches * batch_size);
 
-        // sample predictions table
-        std::cout << "  Sample predictions (first 20 test images):\n\n";
-        std::cout << "  img | true | pred | confidence\n";
-        std::cout << "  ----|------|------|------------\n";
-
-        for (size_t i = 0; i < 20; ++i) {
-            Tensor input({1, 1, 28, 28}, backend);
-            input.set_data(test_data.images[i]);
-
-            Tensor output  = network.forward(input);
-            std::vector<float> out_vec(output.data(), output.data() + 10);
-            uint8_t pred   = predict_class(out_vec);
-            float   conf   = out_vec[pred];
-            bool    correct = (pred == test_data.labels[i]);
-
-            std::cout << "  " << std::setw(3) << i
-                      << " | " << std::setw(4) << (int)test_data.labels[i]
-                      << " | " << std::setw(4) << (int)pred
-                      << " | " << std::fixed << std::setprecision(3) << conf
-                      << (correct ? "  ok" : "  WRONG") << "\n";
-        }
-
-        std::cout << "\ndone.\n\n";
-        return 0;
-
-    } catch (const std::exception& e) {
-        std::cerr << "\nError: " << e.what() << "\n";
-        return 1;
+        std::cout << "Epoch " << (epoch + 1) << "/" << num_epochs
+                  << "  loss=" << avg_loss
+                  << "  train_acc=" << train_acc << "%"
+                  << "  time=" << epoch_sec << "s\n";
     }
+
+    // --- test evaluation ---
+    std::cout << "\nEvaluating on test set...\n";
+
+    size_t test_correct = 0;
+    size_t test_batches = test_data.size() / batch_size;
+
+    for (size_t b = 0; b < test_batches; ++b) {
+        std::vector<float> batch_images(batch_size * 784);
+
+        for (size_t i = 0; i < batch_size; ++i) {
+            size_t idx = b * batch_size + i;
+            std::copy(test_data.images[idx].begin(),
+                      test_data.images[idx].end(),
+                      batch_images.begin() + i * 784);
+        }
+
+        nn::Tensor input({batch_size, 1, 28, 28}, backend);
+        input.set_data(batch_images);
+
+        nn::Tensor logits = net.forward(input);
+
+        std::vector<float> logits_host(batch_size * num_classes);
+        backend->download(logits_host.data(), logits.data(),
+                          batch_size * num_classes);
+
+        for (size_t i = 0; i < batch_size; ++i) {
+            uint8_t pred = nn::predict_class(
+                std::vector<float>(logits_host.begin() + i * num_classes,
+                                   logits_host.begin() + (i + 1) * num_classes));
+            size_t idx = b * batch_size + i;
+            if (pred == test_data.labels[idx]) {
+                ++test_correct;
+            }
+        }
+    }
+
+    float test_acc = 100.0f * test_correct / (test_batches * batch_size);
+    std::cout << "Test accuracy: " << test_acc << "% ("
+              << test_correct << "/" << (test_batches * batch_size) << ")\n";
+
+    return 0;
 }

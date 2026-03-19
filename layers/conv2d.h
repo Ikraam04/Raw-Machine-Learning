@@ -60,12 +60,6 @@ private:
     // fan_in  = in_channels  * kernel_h * kernel_w
     // fan_out = out_channels * kernel_h * kernel_w
     void initialize_weights();
-
-    // permute output between NHWC (matmul result) and NCHW (layer contract)
-    void nhwc_to_nchw(const float* src, float* dst,
-                      int batch, int channels, int h, int w) const;
-    void nchw_to_nhwc(const float* src, float* dst,
-                      int batch, int channels, int h, int w) const;
 };
 
 } // namespace nn

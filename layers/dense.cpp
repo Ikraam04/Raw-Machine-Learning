@@ -42,11 +42,7 @@ Tensor Dense::forward(const Tensor& input) {
     Tensor output = input.matmul(weights_);  // (batch_size x output_dim)
 
     // broadcast bias across the batch
-    for (size_t i = 0; i < batch_size; ++i) {
-        for (size_t j = 0; j < output_dim_; ++j) {
-            output.data()[i * output_dim_ + j] += bias_.data()[j];
-        }
-    }
+    backend_->bias_add(output.data(), bias_.data(), batch_size, output_dim_);
     
     return output;
 }
@@ -65,11 +61,7 @@ Tensor Dense::backward(const Tensor& grad_output) {
 
     // grad_b = sum(grad_output, axis=0) - just add up across the batch
     grad_bias_.fill(0.0f);
-    for (size_t i = 0; i < batch_size; ++i) {
-        for (size_t j = 0; j < output_dim_; ++j) {
-            grad_bias_.data()[j] += grad_output.data()[i * output_dim_ + j];
-        }
-    }
+    backend_->sum_rows(grad_bias_.data(), grad_output.data(), batch_size, output_dim_);
     
     return grad_input;
 }
@@ -81,29 +73,21 @@ void Dense::update_parameters(float lr) {
     const float beta2 = 0.999f;
     const float eps   = 1e-8f;
 
-    // bias-corrected effective step size
-    float bc1   = 1.0f - std::pow(beta1, (float)t_);
-    float bc2   = 1.0f - std::pow(beta2, (float)t_);
+    // bias-corrected denominators
+    float bc1 = 1.0f - std::pow(beta1, (float)t_);
+    float bc2 = 1.0f - std::pow(beta2, (float)t_);
 
     // weights
-    for (size_t i = 0; i < input_dim_ * output_dim_; ++i) {
-        float g = grad_weights_.data()[i];
-        m_weights_.data()[i] = beta1 * m_weights_.data()[i] + (1.0f - beta1) * g;
-        v_weights_.data()[i] = beta2 * v_weights_.data()[i] + (1.0f - beta2) * g * g;
-        float m_hat = m_weights_.data()[i] / bc1;
-        float v_hat = v_weights_.data()[i] / bc2;
-        weights_.data()[i] -= lr * m_hat / (std::sqrt(v_hat) + eps);
-    }
+    backend_->adam_update(weights_.data(), grad_weights_.data(),
+                          m_weights_.data(), v_weights_.data(),
+                          lr, beta1, beta2, bc1, bc2, eps,
+                          input_dim_ * output_dim_);
 
     // bias
-    for (size_t i = 0; i < output_dim_; ++i) {
-        float g = grad_bias_.data()[i];
-        m_bias_.data()[i] = beta1 * m_bias_.data()[i] + (1.0f - beta1) * g;
-        v_bias_.data()[i] = beta2 * v_bias_.data()[i] + (1.0f - beta2) * g * g;
-        float m_hat = m_bias_.data()[i] / bc1;
-        float v_hat = v_bias_.data()[i] / bc2;
-        bias_.data()[i] -= lr * m_hat / (std::sqrt(v_hat) + eps);
-    }
+    backend_->adam_update(bias_.data(), grad_bias_.data(),
+                          m_bias_.data(), v_bias_.data(),
+                          lr, beta1, beta2, bc1, bc2, eps,
+                          output_dim_);
 }
 
 void Dense::initialize_weights() {
@@ -115,14 +99,15 @@ void Dense::initialize_weights() {
     std::mt19937 gen(rd());
     std::uniform_real_distribution<float> dist(-limit, limit);
 
-    for (size_t i = 0; i < input_dim_ * output_dim_; ++i) {
-        weights_.data()[i] = dist(gen);
+    std::vector<float> host_weights(input_dim_ * output_dim_);
+    for (size_t i = 0; i < host_weights.size(); ++i) {
+        host_weights[i] = dist(gen);
     }
+    weights_.set_data(host_weights);
 
     // small positive bias to start
-    for (size_t i = 0; i < output_dim_; ++i) {
-        bias_.data()[i] = 0.01f;
-    }
+    std::vector<float> host_bias(output_dim_, 0.01f);
+    bias_.set_data(host_bias);
 }
 
 } // namespace nn

@@ -32,6 +32,10 @@ public:
     MaxPool2D(int pool_size, BackendPtr backend)
         : MaxPool2D(pool_size, pool_size, pool_size, pool_size, backend) {}
 
+    ~MaxPool2D() override {
+        if (max_indices_) backend_->deallocate_int(max_indices_);
+    }
+
     Tensor forward(const Tensor& input) override;
     Tensor backward(const Tensor& grad_output) override;
     void update_parameters(float /*learning_rate*/) override {}
@@ -42,7 +46,8 @@ private:
 
     // cached from forward for backward pass
     // max_indices_[i] = flat index into the input tensor for the i-th output element
-    std::vector<int> max_indices_;
+    int* max_indices_ = nullptr;
+    size_t indices_size_ = 0;
     int cached_batch_ = 0;
     int cached_channels_ = 0;
     int cached_in_h_ = 0, cached_in_w_ = 0;

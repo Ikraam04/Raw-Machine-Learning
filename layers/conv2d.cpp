@@ -25,7 +25,8 @@ Conv2D::Conv2D(int in_channels, int out_channels,
       v_bias_({1, (size_t)out_channels}, backend),
       col_cache_({1, 1}, backend)  // resized on first forward
 {
-    initialize_weights();
+    initialize_weights(); // initialize weights and bias
+    // zero out gradients and Adam moments
     grad_weights_.fill(0.0f);
     grad_bias_.fill(0.0f);
     m_weights_.fill(0.0f);
@@ -79,15 +80,11 @@ Tensor Conv2D::forward(const Tensor& input) {
                      weights_.data(),   col_cols, out_ch);
 
     // add bias to every output position
-    for (int i = 0; i < batch * out_h * out_w; ++i) {
-        for (int c = 0; c < out_channels_; ++c) {
-            output_nhwc.data()[i * out_channels_ + c] += bias_.data()[c];
-        }
-    }
+    backend_->bias_add(output_nhwc.data(), bias_.data(), col_rows, out_ch);
 
     // permute NHWC → NCHW for the output tensor
     Tensor output({(size_t)batch, out_ch, (size_t)out_h, (size_t)out_w}, backend_);
-    nhwc_to_nchw(output_nhwc.data(), output.data(), batch, out_channels_, out_h, out_w);
+    backend_->nhwc_to_nchw(output_nhwc.data(), output.data(), batch, out_channels_, out_h, out_w);
 
     return output;
 }
@@ -106,7 +103,7 @@ Tensor Conv2D::backward(const Tensor& grad_output) {
 
     // permute grad NCHW → NHWC so shapes align with col_cache_
     Tensor grad_nhwc({col_rows, out_ch}, backend_);
-    nchw_to_nhwc(grad_output.data(), grad_nhwc.data(), batch, out_channels_, out_h, out_w);
+    backend_->nchw_to_nhwc(grad_output.data(), grad_nhwc.data(), batch, out_channels_, out_h, out_w);
 
     // grad_weights = col^T × grad_nhwc  →  {col_cols, out_channels}
     // col^T:      {col_cols, col_rows}
@@ -120,11 +117,7 @@ Tensor Conv2D::backward(const Tensor& grad_output) {
 
     // grad_bias = sum of grad_nhwc over the spatial/batch dimension
     grad_bias_.fill(0.0f);
-    for (int i = 0; i < batch * out_h * out_w; ++i) {
-        for (int c = 0; c < out_channels_; ++c) {
-            grad_bias_.data()[c] += grad_nhwc.data()[i * out_channels_ + c];
-        }
-    }
+    backend_->sum_rows(grad_bias_.data(), grad_nhwc.data(), col_rows, out_ch);
 
     // grad_col = grad_nhwc × weights^T  →  {col_rows, col_cols}
     // grad_nhwc:  {col_rows, out_ch}
@@ -162,26 +155,18 @@ void Conv2D::update_parameters(float lr) {
     float bc1 = 1.0f - std::pow(beta1, (float)t_);
     float bc2 = 1.0f - std::pow(beta2, (float)t_);
 
-    // weights
     size_t w_size = (size_t)(in_channels_ * kernel_h_ * kernel_w_ * out_channels_);
-    for (size_t i = 0; i < w_size; ++i) {
-        float g = grad_weights_.data()[i];
-        m_weights_.data()[i] = beta1 * m_weights_.data()[i] + (1.0f - beta1) * g;
-        v_weights_.data()[i] = beta2 * v_weights_.data()[i] + (1.0f - beta2) * g * g;
-        float m_hat = m_weights_.data()[i] / bc1;
-        float v_hat = v_weights_.data()[i] / bc2;
-        weights_.data()[i] -= lr * m_hat / (std::sqrt(v_hat) + eps);
-    }
+
+    // weights
+    backend_->adam_update(weights_.data(), grad_weights_.data(),
+                          m_weights_.data(), v_weights_.data(),
+                          lr, beta1, beta2, bc1, bc2, eps, w_size);
 
     // bias
-    for (int i = 0; i < out_channels_; ++i) {
-        float g = grad_bias_.data()[i];
-        m_bias_.data()[i] = beta1 * m_bias_.data()[i] + (1.0f - beta1) * g;
-        v_bias_.data()[i] = beta2 * v_bias_.data()[i] + (1.0f - beta2) * g * g;
-        float m_hat = m_bias_.data()[i] / bc1;
-        float v_hat = v_bias_.data()[i] / bc2;
-        bias_.data()[i] -= lr * m_hat / (std::sqrt(v_hat) + eps);
-    }
+    backend_->adam_update(bias_.data(), grad_bias_.data(),
+                          m_bias_.data(), v_bias_.data(),
+                          lr, beta1, beta2, bc1, bc2, eps,
+                          (size_t)out_channels_);
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -197,44 +182,14 @@ void Conv2D::initialize_weights() {
     std::uniform_real_distribution<float> dist(-limit, limit);
 
     size_t w_size = (size_t)(in_channels_ * kernel_h_ * kernel_w_ * out_channels_);
+    std::vector<float> host_weights(w_size);
     for (size_t i = 0; i < w_size; ++i) {
-        weights_.data()[i] = dist(gen);
+        host_weights[i] = dist(gen);
     }
-    for (int i = 0; i < out_channels_; ++i) {
-        bias_.data()[i] = 0.01f;
-    }
-}
+    weights_.set_data(host_weights);
 
-// NHWC[n, oh, ow, c] → NCHW[n, c, oh, ow]
-void Conv2D::nhwc_to_nchw(const float* src, float* dst,
-                           int batch, int channels, int h, int w) const {
-    for (int n = 0; n < batch; ++n) {
-        for (int oh = 0; oh < h; ++oh) {
-            for (int ow = 0; ow < w; ++ow) {
-                for (int c = 0; c < channels; ++c) {
-                    int src_idx = (n * h * w + oh * w + ow) * channels + c;
-                    int dst_idx = n * channels * h * w + c * h * w + oh * w + ow;
-                    dst[dst_idx] = src[src_idx];
-                }
-            }
-        }
-    }
-}
-
-// NCHW[n, c, oh, ow] → NHWC[n, oh, ow, c]
-void Conv2D::nchw_to_nhwc(const float* src, float* dst,
-                           int batch, int channels, int h, int w) const {
-    for (int n = 0; n < batch; ++n) {
-        for (int oh = 0; oh < h; ++oh) {
-            for (int ow = 0; ow < w; ++ow) {
-                for (int c = 0; c < channels; ++c) {
-                    int src_idx = n * channels * h * w + c * h * w + oh * w + ow;
-                    int dst_idx = (n * h * w + oh * w + ow) * channels + c;
-                    dst[dst_idx] = src[src_idx];
-                }
-            }
-        }
-    }
+    std::vector<float> host_bias(out_channels_, 0.01f);
+    bias_.set_data(host_bias);
 }
 
 } // namespace nn
