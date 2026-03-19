@@ -436,10 +436,10 @@ int main() {
         test_new_primitives(eigen, "Eigen (CPU)");
         test_layers(eigen, "Eigen (CPU)");
 
-        // auto cuda = std::make_shared<CudaBackend>();
-        // test_backend(cuda, "CUDA (GPU)");
-        // test_new_primitives(cuda, "CUDA (GPU)");
-        // test_layers(cuda, "CUDA (GPU)");
+        auto cuda = std::make_shared<CudaBackend>();
+        test_backend(cuda, "CUDA (GPU)");
+        test_new_primitives(cuda, "CUDA (GPU)");
+        test_layers(cuda, "CUDA (GPU)");
 
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << "\n";
