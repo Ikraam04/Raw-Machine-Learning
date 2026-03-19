@@ -84,6 +84,79 @@ public:
                         int batch, int in_channels, int height, int width,
                         int kernel_h, int kernel_w, int out_h, int out_w,
                         int pad_h, int pad_w, int stride_h, int stride_w) = 0;
+
+    // broadcast ops
+
+    // data[i * cols + j] += bias[j] for all i in [0, rows)
+    virtual void bias_add(float* data, const float* bias,
+                          size_t rows, size_t cols) = 0;
+
+    // output[j] = sum over i of input[i * cols + j]  (reduce rows, keep cols)
+    // output must be pre-zeroed by the caller
+    virtual void sum_rows(float* output, const float* input,
+                          size_t rows, size_t cols) = 0;
+
+    // optimizer ops
+
+    // in-place Adam update for a single parameter array
+    // param, grad, m, v are all the same 'size'
+    // bc1 = 1 - beta1^t, bc2 = 1 - beta2^t  (precomputed by the caller)
+    virtual void adam_update(float* param, const float* grad,
+                             float* m, float* v,
+                             float lr, float beta1, float beta2,
+                             float bc1, float bc2, float eps,
+                             size_t size) = 0;
+
+    // layout permutation ops
+
+    // NHWC → NCHW:  src[n, h, w, c] → dst[n, c, h, w]
+    virtual void nhwc_to_nchw(const float* src, float* dst,
+                               int batch, int channels, int h, int w) = 0;
+
+    // NCHW → NHWC:  src[n, c, h, w] → dst[n, h, w, c]
+    virtual void nchw_to_nhwc(const float* src, float* dst,
+                               int batch, int channels, int h, int w) = 0;
+
+    // pooling ops
+
+    // max pool forward: input {batch, channels, in_h, in_w} → output {batch, channels, out_h, out_w}
+    // indices[i] = flat index into input for each output element (for backward routing)
+    virtual void maxpool_forward(const float* input, float* output, int* indices,
+                                  int batch, int channels,
+                                  int in_h, int in_w,
+                                  int out_h, int out_w,
+                                  int pool_h, int pool_w,
+                                  int stride_h, int stride_w) = 0;
+
+    // max pool backward: routes grad_output to the input positions recorded in indices
+    // grad_input must be pre-zeroed
+    virtual void maxpool_backward(const float* grad_output, float* grad_input,
+                                   const int* indices,
+                                   int output_size, int input_size) = 0;
+
+    // global average pooling: input {batch, channels, h, w} → output {batch, channels}
+    virtual void global_avg_pool_forward(const float* input, float* output,
+                                          int batch, int channels, int h, int w) = 0;
+
+    // global average pooling backward: output {batch, channels} → input {batch, channels, h, w}
+    virtual void global_avg_pool_backward(const float* grad_output, float* grad_input,
+                                           int batch, int channels, int h, int w) = 0;
+
+    // softmax forward: row-wise softmax with numerical stability (subtract max)
+    // input/output: {rows, cols}, each row is independently softmaxed
+    virtual void softmax_forward(const float* input, float* output,
+                                  size_t rows, size_t cols) = 0;
+
+    // softmax backward: Jacobian-vector product for softmax
+    // softmax_output: cached forward output, grad_output: incoming gradient
+    virtual void softmax_backward(const float* softmax_output,
+                                   const float* grad_output,
+                                   float* grad_input,
+                                   size_t rows, size_t cols) = 0;
+
+    // integer memory (used for pooling indices — needs device alloc for CUDA)
+    virtual int* allocate_int(size_t size) = 0;
+    virtual void deallocate_int(int* ptr) = 0;
 };
 
 } // namespace nn

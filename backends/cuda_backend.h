@@ -51,6 +51,53 @@ public:
                 int kernel_h, int kernel_w, int out_h, int out_w,
                 int pad_h, int pad_w, int stride_h, int stride_w) override;
 
+    // broadcast ops
+    void bias_add(float* data, const float* bias,
+                  size_t rows, size_t cols) override;
+    void sum_rows(float* output, const float* input,
+                  size_t rows, size_t cols) override;
+
+    // optimizer ops
+    void adam_update(float* param, const float* grad,
+                     float* m, float* v,
+                     float lr, float beta1, float beta2,
+                     float bc1, float bc2, float eps,
+                     size_t size) override;
+
+    // layout permutation
+    void nhwc_to_nchw(const float* src, float* dst,
+                       int batch, int channels, int h, int w) override;
+    void nchw_to_nhwc(const float* src, float* dst,
+                       int batch, int channels, int h, int w) override;
+
+    // pooling ops
+    void maxpool_forward(const float* input, float* output, int* indices,
+                          int batch, int channels,
+                          int in_h, int in_w,
+                          int out_h, int out_w,
+                          int pool_h, int pool_w,
+                          int stride_h, int stride_w) override;
+    void maxpool_backward(const float* grad_output, float* grad_input,
+                           const int* indices,
+                           int output_size, int input_size) override;
+
+    // global average pooling
+    void global_avg_pool_forward(const float* input, float* output,
+                                  int batch, int channels, int h, int w) override;
+    void global_avg_pool_backward(const float* grad_output, float* grad_input,
+                                   int batch, int channels, int h, int w) override;
+
+    // softmax
+    void softmax_forward(const float* input, float* output,
+                          size_t rows, size_t cols) override;
+    void softmax_backward(const float* softmax_output,
+                           const float* grad_output,
+                           float* grad_input,
+                           size_t rows, size_t cols) override;
+
+    // integer memory
+    int* allocate_int(size_t size) override;
+    void deallocate_int(int* ptr) override;
 };
 
 } // namespace nn

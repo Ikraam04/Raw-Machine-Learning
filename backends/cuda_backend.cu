@@ -398,4 +398,81 @@ void CudaBackend::col2im(const float* col, float* input,
     CUDA_CHECK(cudaDeviceSynchronize());
 }
 
+// ── stubs for new primitives (TODO: replace with real CUDA kernels) ──────────
+
+void CudaBackend::bias_add(float* /*data*/, const float* /*bias*/,
+                            size_t /*rows*/, size_t /*cols*/) {
+    throw std::runtime_error("CudaBackend::bias_add not yet implemented");
+}
+
+void CudaBackend::sum_rows(float* /*output*/, const float* /*input*/,
+                            size_t /*rows*/, size_t /*cols*/) {
+    throw std::runtime_error("CudaBackend::sum_rows not yet implemented");
+}
+
+void CudaBackend::adam_update(float* /*param*/, const float* /*grad*/,
+                               float* /*m*/, float* /*v*/,
+                               float /*lr*/, float /*beta1*/, float /*beta2*/,
+                               float /*bc1*/, float /*bc2*/, float /*eps*/,
+                               size_t /*size*/) {
+    throw std::runtime_error("CudaBackend::adam_update not yet implemented");
+}
+
+void CudaBackend::nhwc_to_nchw(const float* /*src*/, float* /*dst*/,
+                                 int /*batch*/, int /*channels*/, int /*h*/, int /*w*/) {
+    throw std::runtime_error("CudaBackend::nhwc_to_nchw not yet implemented");
+}
+
+void CudaBackend::nchw_to_nhwc(const float* /*src*/, float* /*dst*/,
+                                 int /*batch*/, int /*channels*/, int /*h*/, int /*w*/) {
+    throw std::runtime_error("CudaBackend::nchw_to_nhwc not yet implemented");
+}
+
+void CudaBackend::maxpool_forward(const float* /*input*/, float* /*output*/, int* /*indices*/,
+                                   int /*batch*/, int /*channels*/,
+                                   int /*in_h*/, int /*in_w*/,
+                                   int /*out_h*/, int /*out_w*/,
+                                   int /*pool_h*/, int /*pool_w*/,
+                                   int /*stride_h*/, int /*stride_w*/) {
+    throw std::runtime_error("CudaBackend::maxpool_forward not yet implemented");
+}
+
+void CudaBackend::maxpool_backward(const float* /*grad_output*/, float* /*grad_input*/,
+                                    const int* /*indices*/,
+                                    int /*output_size*/, int /*input_size*/) {
+    throw std::runtime_error("CudaBackend::maxpool_backward not yet implemented");
+}
+
+void CudaBackend::global_avg_pool_forward(const float* /*input*/, float* /*output*/,
+                                           int /*batch*/, int /*channels*/, int /*h*/, int /*w*/) {
+    throw std::runtime_error("CudaBackend::global_avg_pool_forward not yet implemented");
+}
+
+void CudaBackend::global_avg_pool_backward(const float* /*grad_output*/, float* /*grad_input*/,
+                                            int /*batch*/, int /*channels*/, int /*h*/, int /*w*/) {
+    throw std::runtime_error("CudaBackend::global_avg_pool_backward not yet implemented");
+}
+
+void CudaBackend::softmax_forward(const float* /*input*/, float* /*output*/,
+                                   size_t /*rows*/, size_t /*cols*/) {
+    throw std::runtime_error("CudaBackend::softmax_forward not yet implemented");
+}
+
+void CudaBackend::softmax_backward(const float* /*softmax_output*/,
+                                    const float* /*grad_output*/,
+                                    float* /*grad_input*/,
+                                    size_t /*rows*/, size_t /*cols*/) {
+    throw std::runtime_error("CudaBackend::softmax_backward not yet implemented");
+}
+
+int* CudaBackend::allocate_int(size_t size) {
+    int* ptr = nullptr;
+    CUDA_CHECK(cudaMalloc(&ptr, size * sizeof(int)));
+    return ptr;
+}
+
+void CudaBackend::deallocate_int(int* ptr) {
+    if (ptr) CUDA_CHECK(cudaFree(ptr));
+}
+
 } // namespace nn
