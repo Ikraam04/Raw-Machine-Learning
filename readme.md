@@ -18,7 +18,11 @@ After that I will move to CUDA and write my own kernels (literally not a clue wh
 
 #### REMINDER TO SELF CHANGE DEBUG MODE WHEN COMPILING
 in `/build`
+
 `rm -rf *`
+
 ` cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS="-march=native"`
+
 then remake
+
 `ninja`
