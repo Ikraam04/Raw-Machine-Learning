@@ -270,6 +270,232 @@ __global__ void col2im_kernel(const float* col, float* input,
     }
 }
 
+
+// bias_add: data[i * cols + j] += bias[j]
+// one thread per element in the (rows x cols) matrix
+__global__ void bias_add_kernel(float* data, const float* bias, int rows, int cols) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int total = rows * cols;
+    if (idx < total) {
+        int col = idx % cols;
+        data[idx] += bias[col];
+    }
+}
+
+// sum_rows: output[j] = sum_i input[i * cols + j]
+// one thread per column — walks down the column summing
+__global__ void sum_rows_kernel(float* output, const float* input, int rows, int cols) {
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+    if (col < cols) {
+        float sum = 0.0f;
+        for (int i = 0; i < rows; ++i) {
+            sum += input[i * cols + col];
+        }
+        // output assumed pre-zeroed, but we write directly here
+        output[col] += sum;
+    }
+}
+
+// adam_update: in-place Adam step for each parameter
+// one thread per parameter element
+__global__ void adam_update_kernel(float* param, const float* grad,
+                                    float* m, float* v,
+                                    float lr, float beta1, float beta2,
+                                    float bc1, float bc2, float eps,
+                                    size_t size) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < size) {
+        float g = grad[idx];
+        m[idx] = beta1 * m[idx] + (1.0f - beta1) * g;
+        v[idx] = beta2 * v[idx] + (1.0f - beta2) * g * g;
+        float m_hat = m[idx] / bc1;
+        float v_hat = v[idx] / bc2;
+        param[idx] -= lr * m_hat / (sqrtf(v_hat) + eps);
+    }
+}
+
+// nhwc_to_nchw: src[n, h, w, c] → dst[n, c, h, w]
+// one thread per element — figure out (n, h, w, c) from flat NHWC index,
+// then write to the NCHW position
+__global__ void nhwc_to_nchw_kernel(const float* src, float* dst,
+                                      int batch, int channels, int h, int w) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int total = batch * channels * h * w;
+    if (idx < total) {
+        // idx is a flat NHWC index: idx = n*(h*w*c) + row*(w*c) + col*c + c_idx
+        int c = idx % channels;
+        int tmp = idx / channels;
+        int ow = tmp % w;
+        tmp /= w;
+        int oh = tmp % h;
+        int n = tmp / h;
+
+        int dst_idx = n * channels * h * w + c * h * w + oh * w + ow;
+        dst[dst_idx] = src[idx];
+    }
+}
+
+// nchw_to_nhwc: src[n, c, h, w] → dst[n, h, w, c]
+// one thread per element — figure out (n, c, h, w) from flat NCHW index,
+// then write to the NHWC position
+__global__ void nchw_to_nhwc_kernel(const float* src, float* dst,
+                                      int batch, int channels, int h, int w) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int total = batch * channels * h * w;
+    if (idx < total) {
+        // idx is a flat NCHW index: idx = n*(c*h*w) + c_idx*(h*w) + row*w + col
+        int ow = idx % w;
+        int tmp = idx / w;
+        int oh = tmp % h;
+        tmp /= h;
+        int c = tmp % channels;
+        int n = tmp / channels;
+
+        int dst_idx = (n * h * w + oh * w + ow) * channels + c;
+        dst[dst_idx] = src[idx];
+    }
+}
+
+// maxpool_forward: one thread per output element
+// scans the pool_h × pool_w window to find the max and its flat input index
+// drops the first 4 loops of the CPU version and replaces with flat indexing to assign one thread per output element
+__global__ void maxpool_forward_kernel(const float* input, float* output, int* indices,
+                                        int batch, int channels,
+                                        int in_h, int in_w,
+                                        int out_h, int out_w,
+                                        int pool_h, int pool_w,
+                                        int stride_h, int stride_w) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int total = batch * channels * out_h * out_w;
+    if (idx < total) {
+        // unpack flat output index into (n, c, oh, ow)
+        int ow = idx % out_w;
+        int tmp = idx / out_w; //
+        int oh = tmp % out_h;
+        tmp /= out_h;
+        int c = tmp % channels;
+        int n = tmp / channels;
+
+        float max_val = -1e30f;
+        int max_idx = -1;
+
+        for (int ph = 0; ph < pool_h; ++ph) {
+            for (int pw = 0; pw < pool_w; ++pw) {
+                int ih = oh * stride_h + ph;
+                int iw = ow * stride_w + pw;
+                int flat_in = n * channels * in_h * in_w
+                            + c * in_h * in_w
+                            + ih * in_w + iw;
+                float val = input[flat_in];
+                if (val > max_val) {
+                    max_val = val;
+                    max_idx = flat_in;
+                }
+            }
+        }
+
+        output[idx] = max_val;
+        indices[idx] = max_idx;
+    }
+}
+
+// maxpool_backward: one thread per output element
+// routes gradient to the input position recorded in indices
+// uses atomicAdd because multiple output positions could (in theory) map to same input
+__global__ void maxpool_backward_kernel(const float* grad_output, float* grad_input,
+                                         const int* indices, int output_size) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < output_size) {
+        atomicAdd(&grad_input[indices[idx]], grad_output[idx]);
+    }
+}
+
+// global_avg_pool_forward: one thread per (n, c) pair
+// averages all h*w spatial values for that feature map
+__global__ void global_avg_pool_forward_kernel(const float* input, float* output,
+                                                int batch, int channels, int h, int w) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int total = batch * channels;
+    if (idx < total) {
+        int hw = h * w;
+        const float* fm = input + idx * hw;
+        float sum = 0.0f;
+        for (int i = 0; i < hw; ++i) {
+            sum += fm[i];
+        }
+        output[idx] = sum / (float)hw;
+    }
+}
+
+// global_avg_pool_backward: one thread per element in grad_input
+// each spatial position gets grad_output[n,c] / (h*w)
+__global__ void global_avg_pool_backward_kernel(const float* grad_output, float* grad_input,
+                                                 int batch, int channels, int h, int w) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int total = batch * channels * h * w;
+    if (idx < total) {
+        int hw = h * w;
+        // which (n, c) does this element belong to?
+        int nc = idx / hw;
+        float g = grad_output[nc] / (float)hw;
+        grad_input[idx] = g;
+    }
+}
+
+// softmax_forward: one thread per row
+// each thread computes softmax for its entire row (subtract max, exp, normalize)
+// this is fine for small num_classes (e.g. 10 for MNIST) but not for large ones.
+// works by killing the outer loop over rows and assigning one thread per row, so each thread walks across its row to do the computation
+__global__ void softmax_forward_kernel(const float* input, float* output,
+                                        int rows, int cols) {
+    int row = blockIdx.x * blockDim.x + threadIdx.x;
+    if (row < rows) {
+        const float* in_row = input + row * cols;
+        float* out_row = output + row * cols;
+
+        // find max for numerical stability
+        float max_val = in_row[0];
+        for (int i = 1; i < cols; ++i) {
+            if (in_row[i] > max_val) max_val = in_row[i];
+        }
+
+        // exp and sum
+        float sum = 0.0f;
+        for (int i = 0; i < cols; ++i) {
+            out_row[i] = expf(in_row[i] - max_val);
+            sum += out_row[i];
+        }
+
+        // normalize
+        for (int i = 0; i < cols; ++i) {
+            out_row[i] /= sum;
+        }
+    }
+}
+
+// softmax_backward: one thread per row
+// computes the Jacobian-vector product: grad_in[i] = sum_j s[i]*(d_ij - s[j])*g[j]
+__global__ void softmax_backward_kernel(const float* softmax_output,
+                                         const float* grad_output,
+                                         float* grad_input,
+                                         int rows, int cols) {
+    int row = blockIdx.x * blockDim.x + threadIdx.x;
+    if (row < rows) {
+        const float* s = softmax_output + row * cols;
+        const float* g_out = grad_output + row * cols;
+        float* g_in = grad_input + row * cols;
+
+        for (int i = 0; i < cols; ++i) {
+            float val = 0.0f;
+            for (int j = 0; j < cols; ++j) {
+                float delta = (i == j) ? 1.0f : 0.0f;
+                val += s[i] * (delta - s[j]) * g_out[j];
+            }
+            g_in[i] = val;
+        }
+    }
+}
+
 namespace nn
 {
 
@@ -398,71 +624,100 @@ void CudaBackend::col2im(const float* col, float* input,
     CUDA_CHECK(cudaDeviceSynchronize());
 }
 
-// ── stubs for new primitives (TODO: replace with real CUDA kernels) ──────────
+// ── new primitive implementations ─────────────────────────────────────────────
 
-void CudaBackend::bias_add(float* /*data*/, const float* /*bias*/,
-                            size_t /*rows*/, size_t /*cols*/) {
-    throw std::runtime_error("CudaBackend::bias_add not yet implemented");
+void CudaBackend::bias_add(float* data, const float* bias,
+                            size_t rows, size_t cols) {
+    size_t total = rows * cols;
+    bias_add_kernel<<<(total + 255) / 256, 256>>>(data, bias, (int)rows, (int)cols);
+    CUDA_CHECK(cudaDeviceSynchronize());
 }
 
-void CudaBackend::sum_rows(float* /*output*/, const float* /*input*/,
-                            size_t /*rows*/, size_t /*cols*/) {
-    throw std::runtime_error("CudaBackend::sum_rows not yet implemented");
+void CudaBackend::sum_rows(float* output, const float* input,
+                            size_t rows, size_t cols) {
+    // one thread per column — each thread walks down its column summing values
+    sum_rows_kernel<<<(cols + 255) / 256, 256>>>(output, input, (int)rows, (int)cols);
+    CUDA_CHECK(cudaDeviceSynchronize());
 }
 
-void CudaBackend::adam_update(float* /*param*/, const float* /*grad*/,
-                               float* /*m*/, float* /*v*/,
-                               float /*lr*/, float /*beta1*/, float /*beta2*/,
-                               float /*bc1*/, float /*bc2*/, float /*eps*/,
-                               size_t /*size*/) {
-    throw std::runtime_error("CudaBackend::adam_update not yet implemented");
+void CudaBackend::adam_update(float* param, const float* grad,
+                               float* m, float* v,
+                               float lr, float beta1, float beta2,
+                               float bc1, float bc2, float eps,
+                               size_t size) {
+    adam_update_kernel<<<(size + 255) / 256, 256>>>(
+        param, grad, m, v, lr, beta1, beta2, bc1, bc2, eps, size);
+    CUDA_CHECK(cudaDeviceSynchronize());
 }
 
-void CudaBackend::nhwc_to_nchw(const float* /*src*/, float* /*dst*/,
-                                 int /*batch*/, int /*channels*/, int /*h*/, int /*w*/) {
-    throw std::runtime_error("CudaBackend::nhwc_to_nchw not yet implemented");
+void CudaBackend::nhwc_to_nchw(const float* src, float* dst,
+                                 int batch, int channels, int h, int w) {
+    int total = batch * channels * h * w;
+    nhwc_to_nchw_kernel<<<(total + 255) / 256, 256>>>(src, dst, batch, channels, h, w);
+    CUDA_CHECK(cudaDeviceSynchronize());
 }
 
-void CudaBackend::nchw_to_nhwc(const float* /*src*/, float* /*dst*/,
-                                 int /*batch*/, int /*channels*/, int /*h*/, int /*w*/) {
-    throw std::runtime_error("CudaBackend::nchw_to_nhwc not yet implemented");
+void CudaBackend::nchw_to_nhwc(const float* src, float* dst,
+                                 int batch, int channels, int h, int w) {
+    int total = batch * channels * h * w;
+    nchw_to_nhwc_kernel<<<(total + 255) / 256, 256>>>(src, dst, batch, channels, h, w);
+    CUDA_CHECK(cudaDeviceSynchronize());
 }
 
-void CudaBackend::maxpool_forward(const float* /*input*/, float* /*output*/, int* /*indices*/,
-                                   int /*batch*/, int /*channels*/,
-                                   int /*in_h*/, int /*in_w*/,
-                                   int /*out_h*/, int /*out_w*/,
-                                   int /*pool_h*/, int /*pool_w*/,
-                                   int /*stride_h*/, int /*stride_w*/) {
-    throw std::runtime_error("CudaBackend::maxpool_forward not yet implemented");
+void CudaBackend::maxpool_forward(const float* input, float* output, int* indices,
+                                   int batch, int channels,
+                                   int in_h, int in_w,
+                                   int out_h, int out_w,
+                                   int pool_h, int pool_w,
+                                   int stride_h, int stride_w) {
+    int total = batch * channels * out_h * out_w;
+    maxpool_forward_kernel<<<(total + 255) / 256, 256>>>(
+        input, output, indices,
+        batch, channels, in_h, in_w, out_h, out_w,
+        pool_h, pool_w, stride_h, stride_w);
+    CUDA_CHECK(cudaDeviceSynchronize());
 }
 
-void CudaBackend::maxpool_backward(const float* /*grad_output*/, float* /*grad_input*/,
-                                    const int* /*indices*/,
-                                    int /*output_size*/, int /*input_size*/) {
-    throw std::runtime_error("CudaBackend::maxpool_backward not yet implemented");
+void CudaBackend::maxpool_backward(const float* grad_output, float* grad_input,
+                                    const int* indices,
+                                    int output_size, int /*input_size*/) {
+    maxpool_backward_kernel<<<(output_size + 255) / 256, 256>>>(
+        grad_output, grad_input, indices, output_size);
+    CUDA_CHECK(cudaDeviceSynchronize());
 }
 
-void CudaBackend::global_avg_pool_forward(const float* /*input*/, float* /*output*/,
-                                           int /*batch*/, int /*channels*/, int /*h*/, int /*w*/) {
-    throw std::runtime_error("CudaBackend::global_avg_pool_forward not yet implemented");
+void CudaBackend::global_avg_pool_forward(const float* input, float* output,
+                                           int batch, int channels, int h, int w) {
+    // one thread per (batch, channel) pair
+    int total = batch * channels;
+    global_avg_pool_forward_kernel<<<(total + 255) / 256, 256>>>(
+        input, output, batch, channels, h, w);
+    CUDA_CHECK(cudaDeviceSynchronize());
 }
 
-void CudaBackend::global_avg_pool_backward(const float* /*grad_output*/, float* /*grad_input*/,
-                                            int /*batch*/, int /*channels*/, int /*h*/, int /*w*/) {
-    throw std::runtime_error("CudaBackend::global_avg_pool_backward not yet implemented");
+void CudaBackend::global_avg_pool_backward(const float* grad_output, float* grad_input,
+                                            int batch, int channels, int h, int w) {
+    int total = batch * channels * h * w;
+    global_avg_pool_backward_kernel<<<(total + 255) / 256, 256>>>(
+        grad_output, grad_input, batch, channels, h, w);
+    CUDA_CHECK(cudaDeviceSynchronize());
 }
 
-void CudaBackend::softmax_forward(const float* /*input*/, float* /*output*/,
-                                   size_t /*rows*/, size_t /*cols*/) {
-    throw std::runtime_error("CudaBackend::softmax_forward not yet implemented");
+void CudaBackend::softmax_forward(const float* input, float* output,
+                                   size_t rows, size_t cols) {
+    // one thread per row — each thread computes softmax for its row
+    softmax_forward_kernel<<<(rows + 255) / 256, 256>>>(input, output, (int)rows, (int)cols);
+    CUDA_CHECK(cudaDeviceSynchronize());
 }
 
-void CudaBackend::softmax_backward(const float* /*softmax_output*/,
-                                    const float* /*grad_output*/,
-                                    float* /*grad_input*/,
-                                    size_t /*rows*/, size_t /*cols*/) {
-    throw std::runtime_error("CudaBackend::softmax_backward not yet implemented");
+void CudaBackend::softmax_backward(const float* softmax_output,
+                                    const float* grad_output,
+                                    float* grad_input,
+                                    size_t rows, size_t cols) {
+    // one thread per row
+    softmax_backward_kernel<<<(rows + 255) / 256, 256>>>(
+        softmax_output, grad_output, grad_input, (int)rows, (int)cols);
+    CUDA_CHECK(cudaDeviceSynchronize());
 }
 
 int* CudaBackend::allocate_int(size_t size) {
