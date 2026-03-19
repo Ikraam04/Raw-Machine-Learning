@@ -1,28 +1,45 @@
-NOTE: This CUDA implementation is NOT using cuBLAS.
-It also DOES NOT use memory tiling or any other advanced optimizations.
-It is a basic kernel implementation for comparison.
+==========================================
+  MNIST CNN Benchmark: Eigen vs CUDA
+  5 epochs, batch_size=64, lr=0.001
+  Release mode, -O3 -march=native
+==========================================
 
-64x64:
-  eigen: 0.624ms
-  cuda:  0.092ms
-  speedup: 6.816x
+--- EIGEN (CPU) ---
+Backend: Eigen (CPU)
+Train samples: 60000
+Test samples:  10000
 
-256x256:
-  eigen: 34.681ms
-  cuda:  0.044ms
-  speedup: 784.979x
+Network: Conv(1→16) → ReLU → Pool → Conv(16→32) → ReLU → Pool → Flatten → Dense(1568→128) → ReLU → Dense(128→10)
 
-512x512:
-  eigen: 271.035ms
-  cuda:  0.154ms
-  speedup: 1758.751x
+Epoch 1/5  loss=0.188666  train_acc=94.3353%  time=17.7154s
+Epoch 2/5  loss=0.0547549 train_acc=98.2941%  time=20.5935s
+Epoch 3/5  loss=0.0373287 train_acc=98.8677%  time=20.0342s
+Epoch 4/5  loss=0.0295074 train_acc=99.1129%  time=19.8675s
+Epoch 5/5  loss=0.0241788 train_acc=99.2529%  time=19.7323s
 
-1024x1024:
-  eigen: 2168.813ms
-  cuda:  1.374ms
-  speedup: 1578.229x
+Total training time: 97.9428s
+Test accuracy: 98.8281% (9867/9984)
 
-2048x2048:
-  eigen: 17810.433ms
-  cuda:  6.279ms
-  speedup: 2836.326x
+
+--- CUDA (GPU) ---
+Backend: CUDA (GPU)
+Train samples: 60000
+Test samples:  10000
+
+Network: Conv(1→16) → ReLU → Pool → Conv(16→32) → ReLU → Pool → Flatten → Dense(1568→128) → ReLU → Dense(128→10)
+
+Epoch 1/5  loss=0.184496  train_acc=94.6005%  time=12.4265s
+Epoch 2/5  loss=0.0557212 train_acc=98.2774%  time=11.6933s
+Epoch 3/5  loss=0.0376077 train_acc=98.8377%  time=12.1145s
+Epoch 4/5  loss=0.0283275 train_acc=99.1162%  time=12.0476s
+Epoch 5/5  loss=0.0228662 train_acc=99.2729%  time=12.0118s
+
+Total training time: 60.2938s
+Test accuracy: 98.8081% (9865/9984)
+
+
+--- SUMMARY ---
+                Eigen       CUDA        Speedup
+Total time:     97.94s      60.29s      1.62x
+Test accuracy:  98.83%      98.81%      ~same
+Final loss:     0.0242      0.0229      ~same

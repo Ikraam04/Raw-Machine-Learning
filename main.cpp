@@ -26,13 +26,13 @@
 //   Softmax cross-entropy loss (fused)
 
 int main() {
-    // auto backend = std::make_shared<nn::EigenBackend>();
-    auto backend = std::make_shared<nn::CudaBackend>();
+
+    std::shared_ptr<nn::Backend> backend = std::make_shared<nn::CudaBackend>();
     std::cout << "Backend: CUDA (GPU)\n";
 
     // --- hyperparameters ---
     const size_t batch_size   = 64;
-    const size_t num_epochs   = 10;
+    const size_t num_epochs   = 5;
     const float  learning_rate = 0.001f;
     const size_t num_classes  = 10;
 
@@ -78,6 +78,7 @@ int main() {
     std::vector<size_t> indices(num_train);
     std::iota(indices.begin(), indices.end(), 0);
     std::mt19937 rng(42);
+    double total_time = 0.0;
 
     for (size_t epoch = 0; epoch < num_epochs; ++epoch) {
         auto epoch_start = std::chrono::steady_clock::now();
@@ -144,15 +145,19 @@ int main() {
 
         auto epoch_end = std::chrono::steady_clock::now();
         double epoch_sec = std::chrono::duration<double>(epoch_end - epoch_start).count();
-
+        total_time += epoch_sec;
+        
         float avg_loss = epoch_loss / num_batches;
         float train_acc = 100.0f * epoch_correct / (num_batches * batch_size);
 
         std::cout << "Epoch " << (epoch + 1) << "/" << num_epochs
                   << "  loss=" << avg_loss
                   << "  train_acc=" << train_acc << "%"
-                  << "  time=" << epoch_sec << "s\n";
+                  << "  time=" << epoch_sec << "s\n"
+                  << "\n";
     }
+
+    std::cout << "Total training time: " << total_time << "s\n";
 
     // --- test evaluation ---
     std::cout << "\nEvaluating on test set...\n";
