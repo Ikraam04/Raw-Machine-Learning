@@ -522,47 +522,35 @@ void CudaBackend::download(float* dst_host, const float* src, size_t size) {
 }
 
 void CudaBackend::fill(float* dst, float value, size_t size) {
-    // launch kernel to fill the array
-    // syntax: kernel<<<numBlocks, blockSize>>>(args...)
     fill_kernel<<<(size + 255) / 256, 256>>>(dst, value, size);
-    CUDA_CHECK(cudaDeviceSynchronize()); //synchronize to ensure kernel has finished before we return
 }
-
 
 void CudaBackend::add(float* result, const float* A, const float* B, size_t size) {
     add_kernel<<<(size + 255) / 256, 256>>>(result, A, B, size);
-    CUDA_CHECK(cudaDeviceSynchronize());
 }
-//element-wise multiplication
+
 void CudaBackend::multiply(float* result, const float* A, const float* B, size_t size) {
     multiply_kernel<<<(size + 255) / 256, 256>>>(result, A, B, size);
-    CUDA_CHECK(cudaDeviceSynchronize());
 }
 
 void CudaBackend::scale(float* result, const float* A, float scalar, size_t size) {
     scale_kernel<<<(size + 255) / 256, 256>>>(result, A, scalar, size);
-    CUDA_CHECK(cudaDeviceSynchronize());
 }
-
 
 void CudaBackend::relu(float* result, const float* A, size_t size) {
     relu_kernel<<<(size + 255) / 256, 256>>>(result, A, size);
-    CUDA_CHECK(cudaDeviceSynchronize());
 }
 
 void CudaBackend::relu_derivative(float* result, const float* A, size_t size) {
     relu_derivative_kernel<<<(size + 255) / 256, 256>>>(result, A, size);
-    CUDA_CHECK(cudaDeviceSynchronize());
 }
 
 void CudaBackend::sigmoid(float* result, const float* A, size_t size) {
     sigmoid_kernel<<<(size + 255) / 256, 256>>>(result, A, size);
-    CUDA_CHECK(cudaDeviceSynchronize());
 }
 
 void CudaBackend::sigmoid_derivative(float* result, const float* A, size_t size) {
     sigmoid_derivative_kernel<<<(size + 255) / 256, 256>>>(result, A, size);
-    CUDA_CHECK(cudaDeviceSynchronize());
 }
 
 void CudaBackend::matmul(float* result,
@@ -570,74 +558,57 @@ void CudaBackend::matmul(float* result,
                          const float* B, size_t B_rows, size_t B_cols)
 {
     int M = (int)A_rows;
-    int K = (int)A_cols; 
+    int K = (int)A_cols;
     int N = (int)B_cols;
 
-    // 16x16 block = 256 threads, arranged in 2D to map onto the output matrix
     dim3 threads(16, 16);
     dim3 blocks((N + 15) / 16, (M + 15) / 16);
-
     matmul_kernel<<<blocks, threads>>>(result, A, B, M, K, N);
-    CUDA_CHECK(cudaDeviceSynchronize());
 }
 
 void CudaBackend::transpose(float* result, const float* A, size_t rows, size_t cols) {
-    // 2d block just like matmul - one thread per output element
     dim3 threads(16, 16);
     dim3 blocks((cols + 15) / 16, (rows + 15) / 16);
     transpose_kernel<<<blocks, threads>>>(result, A, (int)rows, (int)cols);
-    CUDA_CHECK(cudaDeviceSynchronize());
 }
 
-
-// im2col and col2im can use 1d blocks since we use a flat indexing scheme in the kernel
+// im2col and col2im use 1d blocks since we use a flat indexing scheme in the kernel
 
 void CudaBackend::im2col(const float* input, float* col,
                          int batch, int in_channels, int height, int width,
                          int kernel_h, int kernel_w, int out_h, int out_w,
                          int pad_h, int pad_w, int stride_h, int stride_w) {
-
     int total = batch * out_h * out_w;
     im2col_kernel<<<(total + 255) / 256, 256>>>(
         input, col,
         batch, in_channels, height, width,
         kernel_h, kernel_w, out_h, out_w,
-        pad_h, pad_w, stride_h, stride_w
-    );
-    CUDA_CHECK(cudaDeviceSynchronize());
+        pad_h, pad_w, stride_h, stride_w);
 }
-
-
 
 void CudaBackend::col2im(const float* col, float* input,
                          int batch, int in_channels, int height, int width,
                          int kernel_h, int kernel_w, int out_h, int out_w,
                          int pad_h, int pad_w, int stride_h, int stride_w) {
-
     int total = batch * out_h * out_w;
     col2im_kernel<<<(total + 255) / 256, 256>>>(
         col, input,
         batch, in_channels, height, width,
         kernel_h, kernel_w, out_h, out_w,
-        pad_h, pad_w, stride_h, stride_w
-    );
-    CUDA_CHECK(cudaDeviceSynchronize());
+        pad_h, pad_w, stride_h, stride_w);
 }
 
-// ── new primitive implementations ─────────────────────────────────────────────
+// new kernels for bias add, sum rows, adam update, data layout conversions, and pooling operations
 
 void CudaBackend::bias_add(float* data, const float* bias,
                             size_t rows, size_t cols) {
     size_t total = rows * cols;
     bias_add_kernel<<<(total + 255) / 256, 256>>>(data, bias, (int)rows, (int)cols);
-    CUDA_CHECK(cudaDeviceSynchronize());
 }
 
 void CudaBackend::sum_rows(float* output, const float* input,
                             size_t rows, size_t cols) {
-    // one thread per column — each thread walks down its column summing values
     sum_rows_kernel<<<(cols + 255) / 256, 256>>>(output, input, (int)rows, (int)cols);
-    CUDA_CHECK(cudaDeviceSynchronize());
 }
 
 void CudaBackend::adam_update(float* param, const float* grad,
@@ -647,21 +618,18 @@ void CudaBackend::adam_update(float* param, const float* grad,
                                size_t size) {
     adam_update_kernel<<<(size + 255) / 256, 256>>>(
         param, grad, m, v, lr, beta1, beta2, bc1, bc2, eps, size);
-    CUDA_CHECK(cudaDeviceSynchronize());
 }
 
 void CudaBackend::nhwc_to_nchw(const float* src, float* dst,
                                  int batch, int channels, int h, int w) {
     int total = batch * channels * h * w;
     nhwc_to_nchw_kernel<<<(total + 255) / 256, 256>>>(src, dst, batch, channels, h, w);
-    CUDA_CHECK(cudaDeviceSynchronize());
 }
 
 void CudaBackend::nchw_to_nhwc(const float* src, float* dst,
                                  int batch, int channels, int h, int w) {
     int total = batch * channels * h * w;
     nchw_to_nhwc_kernel<<<(total + 255) / 256, 256>>>(src, dst, batch, channels, h, w);
-    CUDA_CHECK(cudaDeviceSynchronize());
 }
 
 void CudaBackend::maxpool_forward(const float* input, float* output, int* indices,
@@ -675,7 +643,6 @@ void CudaBackend::maxpool_forward(const float* input, float* output, int* indice
         input, output, indices,
         batch, channels, in_h, in_w, out_h, out_w,
         pool_h, pool_w, stride_h, stride_w);
-    CUDA_CHECK(cudaDeviceSynchronize());
 }
 
 void CudaBackend::maxpool_backward(const float* grad_output, float* grad_input,
@@ -683,16 +650,13 @@ void CudaBackend::maxpool_backward(const float* grad_output, float* grad_input,
                                     int output_size, int /*input_size*/) {
     maxpool_backward_kernel<<<(output_size + 255) / 256, 256>>>(
         grad_output, grad_input, indices, output_size);
-    CUDA_CHECK(cudaDeviceSynchronize());
 }
 
 void CudaBackend::global_avg_pool_forward(const float* input, float* output,
                                            int batch, int channels, int h, int w) {
-    // one thread per (batch, channel) pair
     int total = batch * channels;
     global_avg_pool_forward_kernel<<<(total + 255) / 256, 256>>>(
         input, output, batch, channels, h, w);
-    CUDA_CHECK(cudaDeviceSynchronize());
 }
 
 void CudaBackend::global_avg_pool_backward(const float* grad_output, float* grad_input,
@@ -700,24 +664,19 @@ void CudaBackend::global_avg_pool_backward(const float* grad_output, float* grad
     int total = batch * channels * h * w;
     global_avg_pool_backward_kernel<<<(total + 255) / 256, 256>>>(
         grad_output, grad_input, batch, channels, h, w);
-    CUDA_CHECK(cudaDeviceSynchronize());
 }
 
 void CudaBackend::softmax_forward(const float* input, float* output,
                                    size_t rows, size_t cols) {
-    // one thread per row — each thread computes softmax for its row
     softmax_forward_kernel<<<(rows + 255) / 256, 256>>>(input, output, (int)rows, (int)cols);
-    CUDA_CHECK(cudaDeviceSynchronize());
 }
 
 void CudaBackend::softmax_backward(const float* softmax_output,
                                     const float* grad_output,
                                     float* grad_input,
                                     size_t rows, size_t cols) {
-    // one thread per row
     softmax_backward_kernel<<<(rows + 255) / 256, 256>>>(
         softmax_output, grad_output, grad_input, (int)rows, (int)cols);
-    CUDA_CHECK(cudaDeviceSynchronize());
 }
 
 int* CudaBackend::allocate_int(size_t size) {
