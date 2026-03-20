@@ -157,6 +157,15 @@ public:
     // integer memory (used for pooling indices — needs device alloc for CUDA)
     virtual int* allocate_int(size_t size) = 0;
     virtual void deallocate_int(int* ptr) = 0;
+
+    // fused softmax + cross-entropy loss and gradient in one pass
+    // logits:   device ptr {batch, num_classes} — raw logits (not yet softmaxed)
+    // targets:  device ptr {batch, num_classes} — one-hot labels
+    // grad:     device ptr {batch, num_classes} — output: (softmax - target) / batch
+    // loss_out: device ptr to a single float, must be pre-zeroed — kernel adds loss into it
+    virtual void softmax_cross_entropy(const float* logits, const float* targets,
+                                       float* grad, float* loss_out,
+                                       int batch, int num_classes) = 0;
 };
 
 } // namespace nn

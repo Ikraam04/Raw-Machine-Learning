@@ -1,4 +1,5 @@
 #include "loss.h"
+#include "core/backend_interface.h"
 #include <cmath>
 #include <algorithm>
 
@@ -82,56 +83,27 @@ float softmax_cross_entropy_loss_and_gradient(const Tensor& logits,
                                               Tensor& grad_output,
                                               size_t batch_size,
                                               size_t num_classes) {
+    auto backend = logits.backend();  // shared_ptr<Backend>
     size_t total = batch_size * num_classes;
-    std::vector<float> logit_host(total);
-    logits.backend()->download(logit_host.data(), logits.data(), total);
 
-    const float epsilon = 1e-7f;
-    float total_loss = 0.0f;
-    std::vector<float> grad(total);
+    // upload targets to device (one-hot labels, batch x num_classes)
+    Tensor targets_dev({batch_size, num_classes}, backend);
+    targets_dev.set_data(targets);
 
-    for (size_t b = 0; b < batch_size; ++b) {
-        const float* logit_row = logit_host.data() + b * num_classes;
+    // scalar loss accumulator on device — must be zeroed before kernel
+    Tensor loss_dev({1, 1}, backend);
+    loss_dev.fill(0.0f);
 
-        // softmax with stability trick (subtract max before exp)
-        float max_logit = logit_row[0];
-        for (size_t c = 1; c < num_classes; ++c) {
-            if (logit_row[c] > max_logit) {
-                max_logit = logit_row[c];
-            }
-        }
+    // everything stays on device: logits in, gradient out, loss accumulated
+    backend->softmax_cross_entropy(
+        logits.data(), targets_dev.data(),
+        grad_output.data(), loss_dev.data(),
+        (int)batch_size, (int)num_classes);
 
-        float sum_exp = 0.0f;
-        std::vector<float> softmax(num_classes);
-        for (size_t c = 0; c < num_classes; ++c) {
-            softmax[c] = std::exp(logit_row[c] - max_logit);
-            sum_exp += softmax[c];
-        }
-
-        for (size_t c = 0; c < num_classes; ++c) {
-            softmax[c] /= sum_exp;
-        }
-
-        // loss
-        for (size_t c = 0; c < num_classes; ++c) {
-            size_t idx = b * num_classes + c;
-            float target = targets[idx];
-
-            if (target > 0.5f) {
-                float pred = std::max(epsilon, std::min(1.0f - epsilon, softmax[c]));
-                total_loss += -std::log(pred);
-            }
-        }
-
-        // gradient = (softmax - target) / batch_size
-        for (size_t c = 0; c < num_classes; ++c) {
-            size_t idx = b * num_classes + c;
-            grad[idx] = (softmax[c] - targets[idx]) / batch_size;
-        }
-    }
-
-    grad_output.set_data(grad);
-    return total_loss / batch_size;
+    // download only 1 float
+    float loss = 0.0f;
+    backend->download(&loss, loss_dev.data(), 1);
+    return loss;
 }
 
 } // namespace nn

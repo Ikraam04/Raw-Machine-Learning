@@ -99,6 +99,11 @@ public:
     // integer memory
     int* allocate_int(size_t size) override;
     void deallocate_int(int* ptr) override;
+
+    // fused loss
+    void softmax_cross_entropy(const float* logits, const float* targets,
+                               float* grad, float* loss_out,
+                               int batch, int num_classes) override;
 };
 
 } // namespace nn

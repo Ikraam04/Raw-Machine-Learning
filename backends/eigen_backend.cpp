@@ -381,6 +381,42 @@ void EigenBackend::softmax_backward(const float* softmax_output,
     }
 }
 
+// fused softmax + cross-entropy — data already in CPU memory, no transfers needed
+
+void EigenBackend::softmax_cross_entropy(const float* logits, const float* targets,
+                                          float* grad, float* loss_out,
+                                          int batch, int num_classes) {
+    const float epsilon = 1e-7f;
+    float total_loss = 0.0f;
+
+    for (int b = 0; b < batch; ++b) {
+        const float* logit_row  = logits  + b * num_classes;
+        const float* target_row = targets + b * num_classes;
+        float*       grad_row   = grad    + b * num_classes;
+
+        float max_val = logit_row[0];
+        for (int c = 1; c < num_classes; ++c)
+            if (logit_row[c] > max_val) max_val = logit_row[c];
+
+        float sum_exp = 0.0f;
+        for (int c = 0; c < num_classes; ++c) {
+            grad_row[c] = std::exp(logit_row[c] - max_val);
+            sum_exp += grad_row[c];
+        }
+
+        for (int c = 0; c < num_classes; ++c) {
+            float s = grad_row[c] / sum_exp;
+            if (target_row[c] > 0.5f) {
+                float pred = std::max(epsilon, std::min(1.0f - epsilon, s));
+                total_loss -= std::log(pred);
+            }
+            grad_row[c] = (s - target_row[c]) / batch;
+        }
+    }
+
+    *loss_out += total_loss / batch;
+}
+
 // integer memory
 
 int* EigenBackend::allocate_int(size_t size) {
