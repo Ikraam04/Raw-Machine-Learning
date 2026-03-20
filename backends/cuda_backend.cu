@@ -442,6 +442,45 @@ __global__ void global_avg_pool_backward_kernel(const float* grad_output, float*
     }
 }
 
+// softmax_cross_entropy_kernel: one thread per batch item
+// computes softmax, accumulates cross-entropy loss via atomicAdd, writes gradient
+// drop the outer loop over batch and assign one thread per batch item, so each thread walks across its row to do the computation
+__global__ void softmax_cross_entropy_kernel(const float* logits, const float* targets,
+                                              float* grad, float* loss_out,
+                                              int batch, int num_classes) {
+    int b = blockIdx.x * blockDim.x + threadIdx.x;
+    if (b >= batch) return;
+
+    const float* logit_row  = logits  + b * num_classes;
+    const float* target_row = targets + b * num_classes;
+    float*       grad_row   = grad    + b * num_classes;
+
+    // softmax with stability: subtract max before exp
+    float max_val = logit_row[0];
+    for (int c = 1; c < num_classes; ++c)
+        if (logit_row[c] > max_val) max_val = logit_row[c];
+
+    float sum_exp = 0.0f;
+    for (int c = 0; c < num_classes; ++c) {
+        grad_row[c] = expf(logit_row[c] - max_val);  // reuse grad as temp buffer
+        sum_exp += grad_row[c];
+    }
+
+    float loss = 0.0f;
+    const float epsilon = 1e-7f;
+    for (int c = 0; c < num_classes; ++c) {
+        float s = grad_row[c] / sum_exp;
+        if (target_row[c] > 0.5f) {
+            float pred = fmaxf(epsilon, fminf(1.0f - epsilon, s));
+            loss -= logf(pred);
+        }
+        grad_row[c] = (s - target_row[c]) / batch;
+    }
+
+    // accumulate scalar loss — atomicAdd because all threads write to same location
+    atomicAdd(loss_out, loss / batch);
+}
+
 // softmax_forward: one thread per row
 // each thread computes softmax for its entire row (subtract max, exp, normalize)
 // this is fine for small num_classes (e.g. 10 for MNIST) but not for large ones.
@@ -677,6 +716,13 @@ void CudaBackend::softmax_backward(const float* softmax_output,
                                     size_t rows, size_t cols) {
     softmax_backward_kernel<<<(rows + 255) / 256, 256>>>(
         softmax_output, grad_output, grad_input, (int)rows, (int)cols);
+}
+
+void CudaBackend::softmax_cross_entropy(const float* logits, const float* targets,
+                                         float* grad, float* loss_out,
+                                         int batch, int num_classes) {
+    softmax_cross_entropy_kernel<<<(batch + 255) / 256, 256>>>(
+        logits, targets, grad, loss_out, batch, num_classes);
 }
 
 int* CudaBackend::allocate_int(size_t size) {
