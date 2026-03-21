@@ -69,11 +69,26 @@ Tensor Dense::backward(const Tensor& grad_output) {
 void Dense::update_parameters(float lr) {
     ++t_;
 
+    // Adam (Adaptive Moment Estimation)
+    // vanilla SGD just does: param -= lr * grad
+    // problem: same lr for every param regardless of how noisy/consistent the gradient is
+    //
+    // Adam fixes this by tracking two "moments" per param:
+    //   m = running avg of the gradient itself       (where is it going?)
+    //   v = running avg of the squared gradient      (how noisy is it?)
+    //
+    // params with large/noisy gradients get a smaller effective lr (v is big → divides harder)
+    // params with small/consistent gradients get a larger effective lr (v is small)
+    // this makes training way more stable and less sensitive to lr choice
+    //
+    // beta1/beta2 control how much history to keep (0.9 = 90% old, 10% new)
+    // bc1/bc2 correct for the fact that m and v start at 0 — without this
+    // the first few steps would be massively underestimated
     const float beta1 = 0.9f;
     const float beta2 = 0.999f;
     const float eps   = 1e-8f;
 
-    // bias-corrected denominators
+    // bias correction terms for step t
     float bc1 = 1.0f - std::pow(beta1, (float)t_);
     float bc2 = 1.0f - std::pow(beta2, (float)t_);
 

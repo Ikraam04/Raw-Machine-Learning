@@ -3,16 +3,22 @@
 
 namespace nn {
 
-// Global Average Pooling: collapses each spatial feature map to a single value
+// Global Average Pooling
 //
-// forward:  input {batch, C, H, W} -> output {batch, C}
-//           output[n,c] = mean over all (h,w) of input[n,c,h,w]
+// after conv layers you have a tensor shaped {batch, C, H, W}
+// C feature maps, each H×W pixels. you need to get this into a Dense layer
+// which wants 2D input {batch, features}
 //
-// backward: gradient distributes uniformly back across all spatial positions
-//           grad_input[n,c,h,w] = grad_output[n,c] / (H * W)
+// option 1: Flatten → gives {batch, C*H*W} — huge, lots of params
+// option 2: GAP → takes the *average* of each H×W feature map → {batch, C}
+// much smaller, and it forces the network to care about the whole feature map
+// rather than just memorising where stuff appears spatially
 //
-// no learnable parameters
-// output plugs directly into a Dense layer (2D tensor, shape {batch, C})
+// forward:  output[n,c] = mean of all input[n,c,h,w] over h and w
+// backward: grad just gets distributed evenly back to every spatial position
+//           grad_input[n,c,h,w] = grad_output[n,c] / (H*W)
+//
+// no learnable params
 class GlobalAvgPool : public Layer {
 public:
     GlobalAvgPool(BackendPtr backend) : Layer(backend) {}

@@ -675,8 +675,6 @@ void CudaBackend::col2im(const float* col, float* input,
         pad_h, pad_w, stride_h, stride_w);
 }
 
-// new kernels for bias add, sum rows, adam update, data layout conversions, and pooling operations
-
 void CudaBackend::bias_add(float* data, const float* bias,
                             size_t rows, size_t cols) {
     size_t total = rows * cols;

@@ -1,6 +1,5 @@
-// NOTE: This CUDA implementation is NOT using cuBLAS. 
-// It also DOES NOT use memory tiling or any other advanced optimizations.
-// It is a basic kernel implementation for comparison.
+// cuda backend now uses cublas (cublasSgemm) for matmul
+// eigen uses its own optimised matmul via Eigen::Map
 
 #include "core/tensor.h"
 #include "backends/eigen_backend.h"
@@ -10,7 +9,7 @@
 #include <vector>
 #include <random>
 #include <memory>
-
+//testtt
 using namespace nn;
 using namespace std::chrono;
 

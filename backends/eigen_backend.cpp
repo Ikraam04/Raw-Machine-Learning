@@ -215,6 +215,17 @@ void EigenBackend::adam_update(float* param, const float* grad,
                                 float lr, float beta1, float beta2,
                                 float bc1, float bc2, float eps,
                                 size_t size) {
+    // per-element adam step:
+    //   m = beta1*m + (1-beta1)*g          exponential moving avg of gradient
+    //   v = beta2*v + (1-beta2)*g*g        exponential moving avg of squared gradient
+    //   m_hat = m / bc1                    undo the bias from starting at 0
+    //   v_hat = v / bc2
+    //   param -= lr * m_hat / (sqrt(v_hat) + eps)
+    //
+    // the sqrt(v_hat) in the denominator is the key bit:
+    // big variance in past gradients → big v → smaller effective step
+    // small consistent gradients → small v → bigger effective step
+    // eps just stops divide by zero if v is 0
     for (size_t i = 0; i < size; ++i) {
         float g = grad[i];
         m[i] = beta1 * m[i] + (1.0f - beta1) * g;
@@ -226,6 +237,8 @@ void EigenBackend::adam_update(float* param, const float* grad,
 }
 
 // layout permutation
+// just re-indexes every element from one memory layout to another, no math
+// src_idx / dst_idx are just the flat array positions for [n,h,w,c] vs [n,c,h,w]
 
 void EigenBackend::nhwc_to_nchw(const float* src, float* dst,
                                   int batch, int channels, int h, int w) {

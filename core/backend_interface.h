@@ -13,24 +13,21 @@ public:
     // alloc 'size' floats, returns ptr (cpu or gpu depending on backend)
     virtual float* allocate(size_t size) = 0;
 
-    // free memory allocated by this backend
+    // free ptr allocated by this backend
     virtual void deallocate(float* ptr) = 0;
 
-    // copy 'size' floats from src to dst, both ptrs must be from this backend
+    // device-to-device copy, both ptrs must be on same backend
     virtual void copy(float* dst, const float* src, size_t size) = 0;
 
-    // transfer between cpu and backend memory
-    // for Eigen these are just copies; for CUDA these cross the host/device boundary
+    // for Eigen these are just memcpy; for CUDA they cross the host/device boundary
     virtual void upload(float* dst, const float* src_host, size_t size) = 0;
     virtual void download(float* dst_host, const float* src, size_t size) = 0;
 
-    // fill array with a constant value
     virtual void fill(float* data, float value, size_t size) = 0;
 
     // matrix ops
 
-    // result = A * B, A is (A_rows x A_cols), B is (B_rows x B_cols)
-    // result pre-allocated as (A_rows x B_cols), requires A_cols == B_rows
+    // result = A * B, requires A_cols == B_rows
     virtual void matmul(float* result,
                        const float* A, size_t A_rows, size_t A_cols,
                        const float* B, size_t B_rows, size_t B_cols) = 0;
@@ -98,16 +95,18 @@ public:
 
     // optimizer ops
 
-    // in-place Adam update for a single parameter array
-    // param, grad, m, v are all the same 'size'
-    // bc1 = 1 - beta1^t, bc2 = 1 - beta2^t  (precomputed by the caller)
+    // in-place adam step. bc1 = 1-beta1^t, bc2 = 1-beta2^t, precomputed by caller
     virtual void adam_update(float* param, const float* grad,
                              float* m, float* v,
                              float lr, float beta1, float beta2,
                              float bc1, float bc2, float eps,
                              size_t size) = 0;
 
-    // layout permutation ops
+    // layout permutation
+    // conv layers internally compute in NHWC (pixel-major, channels last) bc
+    // im2col + matmul produces output in that order naturally.
+    // but the rest of the network expects NCHW (channel-major, PyTorch style).
+    // so we permute after every conv forward and before every conv backward.
 
     // NHWC → NCHW:  src[n, h, w, c] → dst[n, c, h, w]
     virtual void nhwc_to_nchw(const float* src, float* dst,

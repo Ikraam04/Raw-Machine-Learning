@@ -25,8 +25,8 @@ Conv2D::Conv2D(int in_channels, int out_channels,
       v_bias_({1, (size_t)out_channels}, backend),
       col_cache_({1, 1}, backend)  // resized on first forward
 {
-    initialize_weights(); // initialize weights and bias
-    // zero out gradients and Adam moments
+    initialize_weights();
+    // zero grads and adam moments
     grad_weights_.fill(0.0f);
     grad_bias_.fill(0.0f);
     m_weights_.fill(0.0f);
@@ -34,8 +34,6 @@ Conv2D::Conv2D(int in_channels, int out_channels,
     m_bias_.fill(0.0f);
     v_bias_.fill(0.0f);
 }
-
-// ── forward ──────────────────────────────────────────────────────────────────
 
 Tensor Conv2D::forward(const Tensor& input) {
     // input: {batch, in_channels, H, W}
@@ -89,8 +87,6 @@ Tensor Conv2D::forward(const Tensor& input) {
     return output;
 }
 
-// ── backward ─────────────────────────────────────────────────────────────────
-
 Tensor Conv2D::backward(const Tensor& grad_output) {
     // grad_output: {batch, out_channels, out_h, out_w}  NCHW
     int batch = cached_batch_;
@@ -143,8 +139,6 @@ Tensor Conv2D::backward(const Tensor& grad_output) {
     return grad_input;
 }
 
-// ── update ────────────────────────────────────────────────────────────────────
-
 void Conv2D::update_parameters(float lr) {
     ++t_;
 
@@ -168,8 +162,6 @@ void Conv2D::update_parameters(float lr) {
                           lr, beta1, beta2, bc1, bc2, eps,
                           (size_t)out_channels_);
 }
-
-// ── helpers ───────────────────────────────────────────────────────────────────
 
 void Conv2D::initialize_weights() {
     // Xavier/Glorot: fan_in = in_channels*kh*kw, fan_out = out_channels*kh*kw
