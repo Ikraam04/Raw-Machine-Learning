@@ -1,6 +1,6 @@
 # Raw ML
 
-## goals
+## Goals
 
 build a neural network completely from scratch in C++. no PyTorch, no TensorFlow, no shortcuts
 
@@ -13,23 +13,23 @@ build a neural network completely from scratch in C++. no PyTorch, no TensorFlow
 
 ---
 
-## what's been built
+## What's been built
 
-**core abstractions**
+**Core abstractions**
 
 - `Tensor` — n-dim float array, doesn't know where its memory lives, delegates everything to a backend
 - `Backend` (abstract) — owns all compute primitives: matmul, relu, im2col, bias_add, adam_update, softmax etc. two impls: `EigenBackend` (CPU) and `CudaBackend` (GPU)
 - `Layer` (abstract) — forward/backward/update. holds a backend ref, never touches raw ptrs directly
 
-**layers**
+**Layers**
 
 `Dense`, `Conv2D`, `MaxPool2D`, `GlobalAvgPool`, `Flatten`, `ReLU`, `Sigmoid`, `Sequential`
 
-**training**
+**Training**
 
 Adam optimiser, Xavier weight init, softmax cross-entropy loss. fused loss+gradient kernel on CUDA
 
-**current network (MNIST)**
+**Current network (MNIST)**
 
 ```
 Conv(1→16, 3×3) → ReLU → MaxPool(2×2) → Conv(16→32, 3×3) → ReLU → MaxPool(2×2)
@@ -40,7 +40,7 @@ Conv(1→16, 3×3) → ReLU → MaxPool(2×2) → Conv(16→32, 3×3) → ReLU �
 
 ---
 
-## architecture
+## Architecture
 
 the backend abstraction is the whole point. a `Tensor` allocated with `EigenBackend` lives in RAM. same `Tensor` with `CudaBackend` lives in VRAM. layer code never touches raw ptrs — it just calls `backend_->matmul(...)`, `backend_->bias_add(...)` etc. swapping backends is one line
 
@@ -63,7 +63,7 @@ full notes in [cuda_optimisations.md](cuda_optimisations.md)
 
 ---
 
-## building
+## Building
 
 ```bash
 cd build
