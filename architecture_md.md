@@ -1,608 +1,290 @@
-# Neural Network Framework - Architecture Documentation
+# Neural Network Framework - Architecture
 
-## Overview
+## overview
 
-This is a modular neural network framework built from scratch in C++ with support for pluggable computational backends. The framework enables training neural networks on CPU (via Eigen) with the ability to seamlessly swap to GPU (via CUDA) without changing higher-level code LA LA.
+modular nn framework built from scratch in C++. the whole point is that you can swap the compute backend (CPU vs GPU) without touching any of the layer / training code. basically mimics how pytorch abstracts device placement, but way simpler obv
 
-## High-Level Architecture
+## high-level architecture
 
 ```
 ┌─────────────────────────────────────────────────────┐
 │                 Application Layer                   │
-│         (Sequential, Training Loops, Loss eval)     │
+│         (Sequential, training loops, loss)          │
 └─────────────────────────────────────────────────────┘
                         ↓
 ┌─────────────────────────────────────────────────────┐
 │                   Layer Layer                       │
-│          (Dense, ReLU, Sigmoid, etc.)               │
+│     (Dense, Conv2D, MaxPool2D, ReLU, Flatten...)    │
 └─────────────────────────────────────────────────────┘
                         ↓
 ┌─────────────────────────────────────────────────────┐
 │                  Tensor Layer                       │
-│         (High-level matrix operations)              │
+│         (n-dim array, delegates everything)         │
 └─────────────────────────────────────────────────────┘
                         ↓
 ┌─────────────────────────────────────────────────────┐
 │                 Backend Layer                       │
-│         (EigenBackend, CudaBackend)                 │
+│         (EigenBackend CPU / CudaBackend GPU)        │
 └─────────────────────────────────────────────────────┘
 ```
 
-## Namespace
-
-All classes live in `namespace nn` to prevent name collisions with other libraries.
-
-```cpp
-namespace nn {
-    // All framework classes
-}
-```
+all classes live in `namespace nn`
 
 ---
 
-## Core Components
+## core components
 
-### 1. Backend Interface (`backend/backend_interface.h`)
+### 1. Backend Interface (`core/backend_interface.h`)
 
-**What it is:** Abstract base class defining all computational operations.
+abstract base class that defines every compute primitive. if it touches data, it goes through here
 
 ```cpp
 class Backend {
+    // memory
     virtual float* allocate(size_t size) = 0;
     virtual void deallocate(float* ptr) = 0;
+    virtual void upload(float* dst, const float* src, size_t n) = 0;
+    virtual void download(float* dst, const float* src, size_t n) = 0;
+
+    // basic ops
     virtual void matmul(...) = 0;
     virtual void add(...) = 0;
+    virtual void scale(...) = 0;
+    virtual void transpose(...) = 0;
     virtual void relu(...) = 0;
-    // ... all primitive operations
+    virtual void relu_backward(...) = 0;
+
+    // conv
+    virtual void im2col(...) = 0;
+    virtual void col2im(...) = 0;
+
+    // layer primitives (so layers never dereference raw ptrs)
+    virtual void bias_add(...) = 0;       // add bias to every row
+    virtual void sum_rows(...) = 0;       // reduce along batch dim (for grad_bias)
+    virtual void adam_update(...) = 0;    // full adam step in one kernel
+    virtual void softmax_forward(...) = 0;
+    virtual void softmax_backward(...) = 0;
+    virtual void permute_nhwc_nchw(...) = 0;
+    virtual void permute_nchw_nhwc(...) = 0;
+    virtual void maxpool_forward(...) = 0;
+    virtual void maxpool_backward(...) = 0;
+    virtual void global_avg_pool_forward(...) = 0;
+    virtual void global_avg_pool_backward(...) = 0;
+
+    // loss (fused kernel on cuda)
+    virtual float softmax_cross_entropy_loss_and_gradient(...) = 0;
 };
 ```
 
-**Purpose:**
-- implement memmory managment functions as well as matrix operations and activation functions
-- Pure virtual functions (= 0) means you cannot instantiate Backend directly
-- Enables polymorphism: swap CPU/GPU backends transparently
-
+pure virtual (= 0) so you cant instantiate Backend directly. polymorphism means layers just call `backend_->whatever()` and dont care which impl runs
 
 ---
 
-### 2. EigenBackend (`backend/eigen_backend.h/cpp`)
+### 2. EigenBackend (`backends/eigen_backend.h/cpp`)
 
-**What it is:** Concrete CPU implementation using the Eigen library.
+CPU impl. uses Eigen for matmul/transpose (its very good at those), plain loops for everything else
 
 ```cpp
 class EigenBackend : public Backend {
     float* allocate(size_t size) override {
-        return new float[size];  // Allocates CPU memory
+        return new float[size];
     }
-    
     void matmul(...) override {
-        // Uses Eigen's optimized matrix multiplication
-        Eigen::Map<...> mat_A(A, rows, cols);
-        Eigen::Map<...> mat_B(B, rows, cols);
-        mat_result = mat_A * mat_B;
+        // wraps ptrs with Eigen::Map (zero copy) then does mat_A * mat_B
+    }
+    void bias_add(float* data, const float* bias, int rows, int cols) override {
+        for (int i = 0; i < rows; ++i)
+            for (int j = 0; j < cols; ++j)
+                data[i * cols + j] += bias[j];
+    }
+    // etc.
+};
+```
+
+---
+
+### 3. CudaBackend (`backends/cuda_backend.h/cu`)
+
+GPU impl. `allocate` calls `cudaMalloc` so all tensor data lives in VRAM. layer code never sees the difference bc it only ever calls backend methods
+
+```cpp
+class CudaBackend : public Backend {
+    float* allocate(size_t size) override {
+        float* ptr;
+        cudaMalloc(&ptr, size * sizeof(float));
+        return ptr;  // device pointer — CPU cannot dereference this
+    }
+    void matmul(...) override {
+        // cublasSgemm — uses tensor cores on Blackwell, much faster than naive kernel
+    }
+    void bias_add(...) override {
+        bias_add_kernel<<<...>>>(data, bias, rows, cols);
+        // no cudaDeviceSynchronize here — kernels queue in order automatically
     }
 };
 ```
 
-**Purpose:**
-- Implements all Backend operations for CPU execution
-- Leverages Eigen library for optimized linear algebra
+key things abt the cuda backend:
+- **no `cudaDeviceSynchronize()` after kernels** — they queue in the default stream and execute in order. syncing after every kernel was the original bottleneck (cost ~4.6s/run)
+- **cuBLAS for matmul** — `cublasSgemm` with the column-major transpose trick. way faster than handwritten kernel on tensor-core hardware
+- **fused softmax_cross_entropy kernel** — saves ~9370 PCIe roundtrips across 5 epochs
+- handle is created lazily on first matmul call
 
 ---
 
-### 3. Tensor (`core/tensor.h/cpp`)
+### 4. Tensor (`core/tensor.h/cpp`)
 
-**What it is:** Multi-dimensional array abstraction with backend support.
+n-dim float array. doesnt know or care where its memory is
 
 ```cpp
 class Tensor {
-private:
-    std::vector<size_t> shape_;           // Dimensions: [rows, cols]
-    size_t size_;                          // Total number of elements
-    float* data_;                          // Raw data pointer (CPU or GPU)
-    std::shared_ptr<Backend> backend_;    // Polymorphic backend pointer
-    
+    std::vector<size_t> shape_;
+    size_t size_;
+    float* data_;                          // cpu ptr or device ptr, depends on backend
+    std::shared_ptr<Backend> backend_;
+
 public:
     Tensor(const std::vector<size_t>& shape, std::shared_ptr<Backend> backend);
-    
-    Tensor matmul(const Tensor& other) const {
-        backend_->matmul(...);  // Virtual dispatch to EigenBackend or CudaBackend
-    }
+    // constructor calls backend_->allocate(), destructor calls backend_->deallocate()
+    // RAII — no manual memory management needed
 };
 ```
 
-**Purpose:**
-- User-friendly interface for matrix/tensor operations
-- Hides backend complexity from users
-- Manages memory lifecycle automatically
-- Provides high-level mathematical operations
+**why raw `float*` instead of `std::vector<float>`?**
+`std::vector` is CPU only. GPU memory comes from `cudaMalloc` and lives at a device address the CPU cant touch. raw ptr works for both, backend handles what it actually means
 
-**Key Design Decisions:**
-
-**Why `std::shared_ptr<Backend>`?**
-- Multiple tensors can share the same backend instance
-- Automatic memory management (no manual delete needed)
-- Enables polymorphism: can point to EigenBackend or future CudaBackend
-
-**Why raw `float*` instead of `std::vector<float>`?**
-- GPU memory cannot be a `std::vector` - it's allocated with `cudaMalloc`
-- Raw pointer can point to either CPU or GPU memory
-- Backend handles allocation/deallocation specifics
-
-**Memory Management:**
-- Constructor allocates via `backend_->allocate()`
-- Destructor deallocates via `backend_->deallocate()`
-- RAII ensures no memory leaks
+**why `shared_ptr<Backend>`?**
+multiple tensors share one backend instance. automatic cleanup, no manual delete, enables polymorphism
 
 ---
 
-### 4. Layer Base Class (`layers/layer.h`)
-
-**What it is:** Abstract interface for all neural network layers.
+### 5. Layer Base (`layers/layer.h`)
 
 ```cpp
 class Layer {
 public:
     virtual Tensor forward(const Tensor& input) = 0;
     virtual Tensor backward(const Tensor& grad_output) = 0;
-    virtual void update_parameters(float learning_rate) = 0;
+    virtual void update_parameters(float lr) = 0;
     virtual ~Layer() = default;
-    
 protected:
     std::shared_ptr<Backend> backend_;
 };
 ```
 
-**Purpose:**
-- Defines what every layer must implement: forward pass, backward pass, parameter updates
-- Enables building networks from interchangeable components
-- Provides polymorphic interface for Sequential network
+every layer gets a backend ref at construction. it uses it for all compute — never calls `data()[i]` directly (that would segfault on cuda bc the ptr is in VRAM)
 
 ---
 
-### 5. Dense Layer (`layers/dense.h/cpp`)
+### 6. Dense (`layers/dense.h/cpp`)
 
-**What it is:** Fully-connected layer with learnable parameters.
+fully connected layer. y = Wx + b
 
-```cpp
-class Dense : public Layer {
-private:
-    size_t input_dim_, output_dim_;
-    
-    // Learnable parameters
-    Tensor weights_;       // (input_dim x output_dim)
-    Tensor bias_;          // (1 x output_dim)
-    
-    // Gradient accumulators
-    Tensor grad_weights_;  
-    Tensor grad_bias_;
-    
-    // Cached for backpropagation
-    Tensor input_cache_;
-    
-public:
-    Tensor forward(const Tensor& input) override {
-        input_cache_ = input;  // Save for backward pass
-        return input.matmul(weights_) + bias_;
-    }
-    
-    Tensor backward(const Tensor& grad_output) override {
-        // Compute gradients via chain rule
-        grad_weights_ = input_cache_.transpose().matmul(grad_output);
-        grad_bias_ = sum(grad_output, axis=0);
-        return grad_output.matmul(weights_.transpose());
-    }
-    
-    void update_parameters(float lr) override {
-        weights_ -= lr * grad_weights_;
-        bias_ -= lr * grad_bias_;
-    }
-};
-```
+- weights: `(input_dim × output_dim)`, Xavier init
+- forward: matmul + bias_add via backend
+- backward: grad_weights = inputᵀ × grad_out, grad_bias = sum_rows(grad_out), grad_input = grad_out × weightsᵀ
+- update: adam step via `backend_->adam_update()`
 
-**Purpose:**
-- Implements affine transformation: **$y = Wx + b$**
-- Learns optimal W and b through gradient descent
-
-**Key Design Decisions:**
-
-**Why cache input during forward?**
-- Backward pass needs input to compute **$grad_W = input^T * grad_{output}$**
-- More efficient to just store
-**Why separate `grad_weights_` from `weights_`?**
-- Accumulate gradients across mini-batches
-- Helps when with optimizers
-- Separates gradient computation from parameter updates
-
-**Weight Initialization:**
-- Uses Xavier/Glorot initialization: $U(-\sqrt{(6/(n_{in} + n_{out}))}, \sqrt{(6/(n_{in} + n_{out})))}$
-
+**why cache input during forward?**
+backward needs it to compute grad_weights (chain rule). cheaper to just store it than recompute
 
 ---
 
-### 6. Activation Layers (`layers/activation.h/cpp`)
+### 7. Conv2D (`layers/conv2d.h/cpp`)
 
-**What it is and why:** just non linear functions to add non linearity - helps with finding more complex patterns
-#### ReLU (Rectified Linear Unit)
- $$f(x) = max(0,x)$$
-```cpp
-class ReLU : public Layer {
-private:
-    Tensor input_cache_;  // Cache input for computing derivative
-    
-public:
-    Tensor forward(const Tensor& input) override {
-        input_cache_ = input;
-        return input.relu();  // max(0, x)
-    }
-    
-    Tensor backward(const Tensor& grad_output) override {
-        // ReLU derivative: 1 if x > 0, else 0
-        return grad_output.multiply(input_cache_.relu_derivative());
-    }
-    
-    void update_parameters(float lr) override {
-        // No learnable parameters
-    }
-};
-```
+2D convolution via im2col + matmul
 
-#### Sigmoid
-$$f(x) = \frac{1}{1+e^{-x}}$$
-```cpp
-class Sigmoid : public Layer {
-private:
-    Tensor output_cache_;  // Cache OUTPUT for derivative
-    
-public:
-    Tensor forward(const Tensor& input) override {
-        Tensor output = input.sigmoid();
-        output_cache_ = output;  // Save output, not input!
-        return output;
-    }
-    
-    Tensor backward(const Tensor& grad_output) override {
-        // Sigmoid derivative: σ(x) * (1 - σ(x))
-        return grad_output.multiply(output_cache_.sigmoid_derivative());
-    }
-};
-```
+forward:
+1. `im2col` — unrolls input patches into a matrix
+2. `matmul(col, weights)` — one big matmul does all the conv
+3. `bias_add`
+4. `permute_nhwc_nchw` — layout conversion for the rest of the network
 
-### Softmax
+backward: grad_weights = colᵀ × grad_nhwc, grad_col = grad_nhwc × weightsᵀ, then `col2im`
 
- $$softmax(z_i) = \frac{e^{z_i}}{\sum_j{e^{z_j}}}$$
-
-```cpp
-class Softmax : public Layer {
-private:
-    Tensor output_cache_;
-    
-public:
-    Tensor forward(const Tensor& input) override {
-        // For each row (batch sample):
-        //   1. Find max for numerical stability
-        //   2. Compute exp(x - max) for each element
-        //   3. Normalize: softmax[i] = exp(x[i]) / sum(exp(x))
-        
-        Tensor output = compute_softmax(input);  // Simplified
-        output_cache_ = output;
-        return output;
-    }
-    
-    Tensor backward(const Tensor& grad_output) override {
-        // Softmax Jacobian: 
-        // grad[i] = sum_j (softmax[i] * (d_ij - softmax[j]) * grad_out[j])
-        // More complex than element-wise due to cross-dependencies
-        
-        return compute_softmax_gradient(output_cache_, grad_output);
-    }
-};
-```
-*full implementation in activation.cpp*
-
-**Purpose:**
-- Add non-linearity to the network (essential for learning complex functions)
-- No learnable parameters (stateless transformations)
-
-**Why different caching strategies?**
-- **ReLU:** Derivative depends on **input** (`x > 0 ? 1 : 0`)
-- **Sigmoid:** Derivative depends on **output** (`σ(x) * (1 - σ(x))`)
-- **softmax** dont even ask LOL
-
-**Why non-linearity matters:**
-- Without activation functions, stacking layers is just matrix multiplication
-- Multiple linear layers = one linear layer (useless)
-- Non-linearity enables learning complex, non-linear decision boundaries
+im2col is the standard trick — trades memory for the ability to use a fast generic matmul instead of a slow nested loop conv
 
 ---
 
-### 7. Loss
-**what it is:** Functions that calculate how "wrong" the network is, not exactly structual (layers) but just a function
+### 8. Activations (`layers/activation.h/cpp`)
 
-#### Mean Squared Error (MSE)
-$$ Loss = \frac{1}{BD}\sum_{b=1}^{B}\sum_{c=1}^{C}(\hat{y}_{b,c} - y_{b,c})$$
+non-linearities, no learnable params
 
-```cpp
-float mse_loss(const Tensor& predictions,
-               const std::vector<float>& targets,
-               size_t batch_size,
-               size_t output_dim) 
-               {
-    float total_loss = 0.0f;
-    
-    for (size_t b = 0; b < batch_size; ++b) { // for each sample in batch
-        for (size_t c = 0; c < output_dim; ++c) { // for each output dimension
-            size_t idx = b * output_dim + c; // index in flat vector
-            float pred = predictions.data()[idx]; 
-            float target = targets[idx];
-            total_loss += (pred - target) * (pred - target); // MSE: (pred - target)^2 and then accumulate
-        }
-    }
-    
-    return total_loss / (batch_size * output_dim);  // average over batch and output dimensions
-}
-```
-- assumes input and output are just continious values, literally measures the square distance
-- Used for regression
+- **ReLU:** `f(x) = max(0, x)`. backward masks grad where input ≤ 0. caches input
+- **Sigmoid:** `f(x) = 1/(1+e^-x)`. backward uses output (not input) bc derivative is `σ(x)(1-σ(x))`
+- **Softmax:** normalised exp over class dim. mostly used fused with cross-entropy loss now
 
-#### cross entropy loss
-$$Loss = -z\sum_{c=1}^{C}y_{b,c}log(\hat{y}_{b,c}) $$
-
-```cpp
-float cross_entropy_loss(const Tensor& predictions,
-                        const std::vector<float>& targets,
-                        size_t batch_size,
-                        size_t num_classes) {
-    const float epsilon = 1e-7f;  // Prevent log(0)
-    float total_loss = 0.0f;
-    
-    for (size_t b = 0; b < batch_size; ++b) { // for each sample in batch
-        for (size_t c = 0; c < num_classes; ++c) { // for each class in output
-            size_t idx = b * num_classes + c;
-            float pred = predictions.data()[idx];
-            float target = targets[idx];
-            
-            // Only compute loss for true class (target = 1)
-            if (target > 0.5f) {
-                // Clamp prediction to [epsilon, 1 - epsilon]
-                pred = std::max(epsilon, std::min(1.0f - epsilon, pred));
-                total_loss += -std::log(pred);
-            }
-        }
-    }
-    
-    return total_loss / batch_size;  // Average over batch
-}
-```
- - mainly used for classification 
- - assumes input (logit) is a valid probability distrubution (after softmax or sigmoid)
-
-
-### 8. Sequential Network (`network/sequential.h/cpp`)
-
-**What it is:** Container that chains layers into a complete network.
-
-```cpp
-class Sequential {
-private:
-    std::vector<std::shared_ptr<Layer>> layers_;
-    
-public:
-    void add(std::shared_ptr<Layer> layer) {
-        layers_.push_back(layer);
-    }
-    
-    Tensor forward(const Tensor& input) {
-        Tensor output = input;
-        for (auto& layer : layers_) {
-            output = layer->forward(output);
-        }
-        return output;
-    }
-    
-    void backward(const Tensor& grad_output) {
-        Tensor grad = grad_output;
-        // Iterate in REVERSE order
-        for (auto it = layers_.rbegin(); it != layers_.rend(); ++it) {
-            grad = (*it)->backward(grad);
-        }
-    }
-    
-    void update_parameters(float lr) {
-        for (auto& layer : layers_) {
-            layer->update_parameters(lr);
-        }
-    }
-};
-```
-
-**Purpose:**
-- Composable architecture: build networks by stacking layers
-- Handles forward/backward passes automatically
-- Treats all layer types uniformly via polymorphism
-
-**Key Design Decisions:**
-
-**Why `std::shared_ptr<Layer>`?**
-- Polymorphism: store Dense, ReLU, Sigmoid in same vector
-- Shared ownership: layers could theoretically be shared between networks
-- Automatic cleanup when Sequential is destroyed
-
-**Why backward in reverse order?**
-- Chain rule: gradients flow backwards through computation graph
-- Output layer gradients computed first, then propagated backwards
-- Each layer needs gradient from next layer to compute its own
+without non-linearities, stacking layers is just matrix multiplication — multiple linear layers collapse to one. non-linearity is what lets the network learn complex stuff
 
 ---
 
-## How Components Interact
+### 9. Sequential (`layers/sequential.h/cpp`)
 
-### Creating a Network
-
-```cpp
-// 1. Create backend
-auto backend = std::make_shared<EigenBackend>();
-
-// 2. Create network
-Sequential network;
-
-// 3. Add layers
-network.add(std::make_shared<Dense>(2, 4, backend));   // Input: 2, Hidden: 4
-network.add(std::make_shared<ReLU>(backend));           // Activation
-network.add(std::make_shared<Dense>(4, 1, backend));   // Hidden: 4, Output: 1
-network.add(std::make_shared<Sigmoid>(backend));        // Output activation
-```
-
-**What's happening:**
-1. EigenBackend object created (shared across all tensors)
-2. Dense layer creates Tensors for weights/bias, storing backend pointer
-3. Layers stored in Sequential as `shared_ptr<Layer>` (polymorphic)
-
-### Forward Pass Flow
+just a vector of layers with forward/backward/update wired up
 
 ```cpp
-Tensor input({1, 2}, backend);
-input.set_data({0.5, 0.3});
+// forward: iterate in order
+for (auto& layer : layers_)
+    output = layer->forward(output);
 
-Tensor output = network.forward(input);
+// backward: iterate in REVERSE (chain rule — gradients flow backwards)
+for (auto it = layers_.rbegin(); it != layers_.rend(); ++it)
+    grad = (*it)->backward(grad);
 ```
 
-**Call chain:**
-```
-network.forward(input)
-  ├─> layers_[0]->forward(input)           // Dense layer
-  │     ├─> input.matmul(weights_)
-  │     │     └─> backend_->matmul(...)    // Virtual call → EigenBackend::matmul
-  │     └─> result.add(bias_)
-  │
-  ├─> layers_[1]->forward(...)              // ReLU layer
-  │     └─> input.relu()
-  │           └─> backend_->relu(...)       // EigenBackend::relu
-  │
-  ├─> layers_[2]->forward(...)              // Dense layer
-  └─> layers_[3]->forward(...)              // Sigmoid layer
-```
-
-### Backward Pass Flow
-
-```cpp
-Tensor grad_output({1, 1}, backend);
-grad_output.set_data({1.0});  // Loss gradient
-
-network.backward(grad_output);
-```
-
-**Call chain (REVERSE order):**
-```
-network.backward(grad_output)
-  ├─> layers_[3]->backward(grad)    // Sigmoid (last layer)
-  │     └─> Returns grad w.r.t. its input
-  │
-  ├─> layers_[2]->backward(grad)    // Dense
-  │     ├─> Computes grad_weights, grad_bias
-  │     └─> Returns grad w.r.t. its input
-  │
-  ├─> layers_[1]->backward(grad)    // ReLU
-  └─> layers_[0]->backward(grad)    // Dense (first layer)
-```
-
-### Parameter Update Flow
-
-```cpp
-network.update_parameters(0.01);  // learning_rate = 0.01
-```
-
-**Call chain:**
-```
-network.update_parameters(0.01)
-  ├─> layers_[0]->update_parameters(0.01)
-  │     └─> weights_ -= 0.01 * grad_weights_
-  │     └─> bias_ -= 0.01 * grad_bias_
-  │
-  ├─> layers_[1]->update_parameters(0.01)  // No-op (ReLU has no params)
-  │
-  ├─> layers_[2]->update_parameters(0.01)
-  └─> layers_[3]->update_parameters(0.01)  // No-op (Sigmoid has no params)
-```
-
-### Memory Lifecycle
-
-```
-1. User creates Tensor
-   ↓
-2. Tensor constructor calls backend_->allocate(size)
-   ↓
-3. EigenBackend::allocate() returns new float[size] (CPU memory)
-   ↓
-4. Tensor stores the pointer in data_
-   ↓
-5. User calls tensor.matmul(other)
-   ↓
-6. Tensor calls backend_->matmul(data_, other.data_, ...)
-   ↓
-7. EigenBackend::matmul wraps pointers with Eigen::Map (zero-copy)
-   ↓
-8. Eigen performs optimized matrix multiplication
-   ↓
-9. Result stored in newly allocated Tensor
-   ↓
-10. When Tensor destructor called, calls backend_->deallocate(data_)
-    ↓
-11. EigenBackend::deallocate() calls delete[] ptr
-```
+stores layers as `shared_ptr<Layer>` so you can mix Dense, Conv2D, ReLU etc in the same vector
 
 ---
 
-## Current Capabilities
+### 10. Loss (`loss/loss.h/cpp`)
 
-### What Works Now
-- Complete forward and backward propagation
-- Gradient descent optimization
-- Dense (fully-connected) layers
-- ReLU and Sigmoid activations
-- Sequential network composition
-- CPU execution via Eigen backend
-- Trains and solves XOR problem (non-linear classification)
-- Trains and solves MNIST
+not a layer, just functions. computes scalar loss + gradient to kick off backprop
 
-### Training Example (XOR)
+- **MSE** — regression, measures squared distance
+- **cross entropy** — classification, assumes softmax output
+- **softmax_cross_entropy** (fused) — numerically stable, does softmax + loss + gradient in one pass. on cuda this is a single kernel with atomicAdd for the loss scalar — avoids downloading logits to cpu every batch
+
+---
+
+## how it all fits together
 
 ```cpp
-auto backend = std::make_shared<EigenBackend>();
+auto backend = std::make_shared<CudaBackend>();  // swap to EigenBackend for CPU
 
-Sequential network;
-network.add(std::make_shared<Dense>(2, 4, backend));
-network.add(std::make_shared<Sigmoid>(backend));
-network.add(std::make_shared<Dense>(4, 1, backend));
-network.add(std::make_shared<Sigmoid>(backend));
+Sequential net;
+net.add(std::make_shared<Conv2D>(1, 16, 3, 3, 1, 1, 1, 1, backend));
+net.add(std::make_shared<ReLU>(backend));
+net.add(std::make_shared<MaxPool2D>(2, 2, backend));
+// ... etc
 
-// Training loop
-for (int epoch = 0; epoch < 10000; ++epoch) {
-    for (auto& [input, target] : training_data) {
-        Tensor output = network.forward(input);
-        Tensor loss_grad = compute_gradient(output, target);
-        network.backward(loss_grad);
-        network.update_parameters(learning_rate);
-    }
-}
-
-// Result: Network learns XOR with ~100% accuracy
+// training loop
+Tensor output = net.forward(batch);
+auto [loss, grad] = softmax_cross_entropy(output, labels);
+net.backward(grad);
+net.update_parameters(lr);
 ```
 
----
-
-
-
-## Key Takeaways
-
-1. **Abstraction enables flexibility:** Backend interface allows CPU/GPU swap without changing user code
-2. **Polymorphism is powerful:** Virtual functions enable treating different backends/layers uniformly
-3. **Smart pointers prevent bugs:** `shared_ptr` handles memory automatically, prevents leaks
-4. **RAII ensures safety:** Resources (memory) tied to object lifetime
-5. **Separation of concerns:** Clear boundaries between components makes code maintainable
-6. **Design for extension:** Adding new functionality doesn't require modifying existing code
-
-This architecture mirrors production frameworks (PyTorch, TensorFlow) in design philosophy, just simplified for learning. The patterns and principles scale to real-world deep learning systems.
+swapping `CudaBackend` ↔ `EigenBackend` is literally one line. all the layer logic is identical
 
 ---
 
+## current capabilities
+
+- full forward + backward prop
+- Conv2D, MaxPool2D, GlobalAvgPool, Dense, ReLU, Sigmoid, Flatten
+- Adam optimiser, Xavier init
+- MNIST CNN: ~99.2% train / ~98.7% test accuracy in 5 epochs (~46s on RTX 5080)
+- both CPU (Eigen) and GPU (CUDA) backends fully working
+- cuBLAS matmul, fused softmax_cross_entropy kernel
+
+see [cuda_optimisations.md](cuda_optimisations.md) for the optimisation history
+
+---
+
+## key takeaways
+
+1. backend interface = the whole design. everything else falls out of it
+2. virtual dispatch lets you treat cpu/gpu identically at the layer level
+3. `shared_ptr` everywhere means you basically cant leak memory even if you try
+4. layers must never dereference `data()` directly — always go through backend methods (otherwise CUDA segfaults immediately)
+5. im2col converts conv into matmul so you get cuBLAS for free
