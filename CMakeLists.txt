@@ -1,4 +1,8 @@
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.18)
+# Set CUDA architecture to 100 for RTX 5080 (Blackwell) BEFORE project()
+# This helps CMake 3.28+ with CUDA 13 detection
+set(CMAKE_CUDA_ARCHITECTURES 100)
+
 project(raw_ml LANGUAGES CXX CUDA)
 
 # BECAUSE MY COMPILER KEPT DEFAULTING TO DEBUG MODE AND I WANT OPTIMIZATIONS
@@ -11,15 +15,16 @@ endif()
 # Set standards for both C++ and CUDA
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CUDA_STANDARD 17)
+set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 
 # march-native and O3 for release builds
 set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -march=native -O3")
 
-
-# Set CUDA architecture to 89, (for 4090, may need to update for newer cards)
-set(CMAKE_CUDA_ARCHITECTURES 89)
-
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+# Find CUDA Toolkit for cuBLAS
+find_package(CUDAToolkit REQUIRED)
 
 set(Eigen3_DIR /usr/share/eigen3/cmake)
 find_package(Eigen3 REQUIRED NO_MODULE)
@@ -37,7 +42,6 @@ add_executable(raw_ml
     layers/sequential.cpp
     loss/loss.cpp
     data/mnist_loader.cpp
-
 )
 
 # unit tests
@@ -67,7 +71,7 @@ target_include_directories(bench PRIVATE
     core
     backends
 )
-target_link_libraries(bench PRIVATE Eigen3::Eigen)
+target_link_libraries(bench PRIVATE Eigen3::Eigen CUDA::cublas)
 
 target_include_directories(raw_ml PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -77,7 +81,7 @@ target_include_directories(raw_ml PRIVATE
     loss
     data
 )
-target_link_libraries(raw_ml PRIVATE Eigen3::Eigen)
+target_link_libraries(raw_ml PRIVATE Eigen3::Eigen CUDA::cublas)
 
 target_include_directories(testing PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -87,4 +91,4 @@ target_include_directories(testing PRIVATE
     loss
     data
 )
-target_link_libraries(testing PRIVATE Eigen3::Eigen)
+target_link_libraries(testing PRIVATE Eigen3::Eigen CUDA::cublas)

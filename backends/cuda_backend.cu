@@ -1,5 +1,6 @@
 #include "cuda_backend.h"
 #include <cuda_runtime.h>
+#include <cublas_v2.h>
 #include <stdexcept>
 #include <cstdio>  // For fprintf and stderr
 #include <cstdlib> // For exit
@@ -14,6 +15,16 @@
             exit(1); \
         } \
     } while(0) //prevent dangling else
+
+#define CUBLAS_CHECK(call) \
+    do { \
+        cublasStatus_t err = (call); \
+        if (err != CUBLAS_STATUS_SUCCESS) { \
+            fprintf(stderr, "cuBLAS error at %s:%d — %d\n", \
+                    __FILE__, __LINE__, (int)err); \
+            exit(1); \
+        } \
+    } while(0)
 
 
 
@@ -538,6 +549,13 @@ __global__ void softmax_backward_kernel(const float* softmax_output,
 namespace nn
 {
 
+CudaBackend::CudaBackend() : cublas_handle_(nullptr) {}
+
+
+CudaBackend::~CudaBackend() {
+    cublasDestroy(cublas_handle_);
+}
+
 float* CudaBackend::allocate(size_t size) {
     float* ptr = nullptr;
     CUDA_CHECK(cudaMalloc(&ptr, size * sizeof(float)));
@@ -596,13 +614,33 @@ void CudaBackend::matmul(float* result,
                          const float* A, size_t A_rows, size_t A_cols,
                          const float* B, size_t B_rows, size_t B_cols)
 {
+    if (!cublas_handle_) {
+        CUBLAS_CHECK(cublasCreate(&cublas_handle_));
+    }
+    // cuBLAS is column-major but our data is row-major.
+    // C = A * B  (row-major)  ≡  C^T = B^T * A^T  (col-major)
+    // cuBLAS sees our row-major A as col-major A^T automatically,
+    // so we just swap A and B in the call and flip M/N.
+    //
+    // cublasSgemm computes: result = alpha*(B * A) + beta*result
+    // with dimensions: result(M x N) = B(M x K) * A(K x N)  in col-major
+    // which gives us:  result(A_rows x B_cols) = A(A_rows x A_cols) * B(A_cols x B_cols)
     int M = (int)A_rows;
     int K = (int)A_cols;
     int N = (int)B_cols;
 
-    dim3 threads(16, 16);
-    dim3 blocks((N + 15) / 16, (M + 15) / 16);
-    matmul_kernel<<<blocks, threads>>>(result, A, B, M, K, N);
+    const float alpha = 1.0f;
+    const float beta  = 0.0f;
+
+    // cublasSgemm(handle, transB, transA, N, M, K, alpha, B, N, A, K, beta, result, N)
+    CUBLAS_CHECK(cublasSgemm(cublas_handle_,
+                             CUBLAS_OP_N, CUBLAS_OP_N,
+                             N, M, K,
+                             &alpha,
+                             B, N,
+                             A, K,
+                             &beta,
+                             result, N));
 }
 
 void CudaBackend::transpose(float* result, const float* A, size_t rows, size_t cols) {

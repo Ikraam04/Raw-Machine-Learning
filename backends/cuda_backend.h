@@ -1,12 +1,16 @@
 #pragma once
 #include "core/backend_interface.h"
+#include <cublas_v2.h>
 
 namespace nn {
 // gpu backend using CUDA - all memory on gpu, everything on gpu
 class CudaBackend : public Backend {
 public:
-    CudaBackend() = default;
-    ~CudaBackend() override = default; 
+    CudaBackend();
+    ~CudaBackend() override;
+
+private:
+    cublasHandle_t cublas_handle_; 
 
     // memory
     float* allocate(size_t size) override;
