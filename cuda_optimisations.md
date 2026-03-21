@@ -67,12 +67,39 @@ loss) per batch.
 
 ---
 
+## Optimisation 3 — cuBLAS `Sgemm` for matrix multiply
+
+Every `matmul` call used a hand-written naive CUDA kernel where each thread
+computes one output element by reading straight from global memory for every
+element of the dot product (~100×500 cycle latency per access). The RTX 5080's
+tensor cores were completely unused.
+
+**Fix:** replaced the custom matmul kernel with `cublasSgemm` from NVIDIA's
+cuBLAS library. cuBLAS uses hand-tuned assembly kernels with shared memory
+tiling and, on Blackwell (SM 100), drives the tensor cores directly. The
+row-major ↔ column-major mismatch is resolved with the standard transpose
+trick: computing `C = A×B` in row-major is equivalent to `Cᵀ = Bᵀ×Aᵀ` in
+column-major, which is just swapping the A/B argument order in `cublasSgemm`.
+
+| Epoch | Loss | Train Acc | Time |
+|-------|------|-----------|------|
+| 1 | 0.1838 | 94.53% | 9.18s |
+| 2 | 0.0559 | 98.23% | 9.31s |
+| 3 | 0.0372 | 98.88% | 9.17s |
+| 4 | 0.0283 | 99.09% | 9.07s |
+| 5 | 0.0233 | 99.24% | 9.22s |
+
+**Total: 45.94s &nbsp;|&nbsp; Test accuracy: 98.68% &nbsp;|&nbsp; Saved: ~4.8s vs opt 2**
+
+---
+
 ## Summary
 
 | Version | Total Time | vs Baseline |
 |---------|-----------|-------------|
 | Baseline | 60.29s | — |
 | + Remove syncs | 55.72s | -4.6s |
-| + Loss kernel | 50.69s | **-9.6s (-16%)** |
+| + Loss kernel | 50.69s | -9.6s (-16%) |
+| + cuBLAS matmul | 45.94s | **-14.4s (-24%)** |
 
 Test accuracy consistent throughout (~98.9%) — all gains are pure speed, no accuracy trade-off.
