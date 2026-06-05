@@ -1,16 +1,10 @@
-# ========================
-# Build directories
-# ========================
+
 build/
 cmake-build-*/
 bin/
 obj/
 out/
 
-
-# ========================
-# CMake
-# ========================
 CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake
@@ -18,9 +12,6 @@ Makefile
 compile_commands.json
 main
 
-# ========================
-# Compiled objects
-# ========================
 *.o
 *.obj
 *.lo
@@ -40,39 +31,27 @@ main
 *.out
 *.app
 
-# ========================
-# Data files
-# ========================
+
 MNIST_Data/
-# ========================
-# Debug / profiling
-# ========================
+
 *.dSYM/
 *.stackdump
 *.gcno
 *.gcda
 *.gcov
 
-# ========================
-# Logs
-# ========================
+
 *.log
 
-# ========================
-# VS Code
-# ========================
+
 .vscode/
 .idea/
 .VSCodeCounter/
-# ========================
-# OS junk
-# ========================
+
 .DS_Store
 Thumbs.db
 
-# ========================
-# Temporary files
-# ========================
+
 *~
 *.swp
 *.swo
